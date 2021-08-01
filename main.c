@@ -1,5 +1,6 @@
 #include <sys/socket.h>
 #include <sys/sendfile.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -86,7 +87,7 @@ int parse_request(struct request_header *header, char *buff, size_t buff_size){
         header->metod = PATCH;
     header->file = strtok(0, " ");
     strtok(0, "/");
-    line = strtok(0, "\r\n");
+    line = strtok(0, CRLF);
 
     char *remainder = 0;
     header->version = strtof(line, &remainder);
@@ -100,7 +101,6 @@ int main(int argc, const char **argv) {
     int sock_fd, port_no = 80, opt = 1;
     struct sockaddr_in serv_addr;
     socklen_t socklen = sizeof(serv_addr);
-    char buff[BUFFSIZE];
 
     if(argc == 2){
         errno = 0;
@@ -132,18 +132,23 @@ int main(int argc, const char **argv) {
 
     if((bind(sock_fd, (struct sockaddr*)&serv_addr, sizeof(serv_addr))) < 0)
         panic("Could not bind address\n");
-    if(listen(sock_fd, 20) != 0)
+    if(listen(sock_fd, 2) != 0)
         panic("Could not set the socket in passive mode\n");
     /* ready to start serving */
 
+    char buff[BUFFSIZE];
     while(1) {
         int file;
         int new_fd = accept(sock_fd, (struct sockaddr*)&serv_addr, &socklen);
         struct request_header request = {0};
         struct response_header response = {0};
 
-        read(new_fd, buff, BUFFSIZE);
+        if(!read(new_fd, buff, BUFFSIZE)) {
+            close(new_fd);
+            continue;
+        }
 
+        printf("%s\n", buff);
 
         parse_request(&request, buff, BUFFSIZE);
 
@@ -170,9 +175,6 @@ int main(int argc, const char **argv) {
         struct stat stat;
         fstat(file, &stat);
         sendfile(new_fd, file, 0, stat.st_size);
-
-        printf("%s\n", request.file);
-
 
         close(file);
         close(new_fd);
