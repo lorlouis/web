@@ -7,100 +7,27 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
+
+#include "headers.h"
+#include "mimes.h"
 
 #define BUFFSIZE 4096
 
-#define CRLF "\xd\xa"
 
 void panic(char* str) {
     perror(str);
     exit(EXIT_FAILURE);
 }
 
-enum http_method {
-    GET,
-    HEAD,
-    POST,
-    PUT,
-    DELETE,
-    CONNECT,
-    OPTIONS,
-    TRACE,
-    PATCH
-};
-
-struct request_header {
-    enum http_method metod;
-    float version;
-    char *file;
-    char *host;
-    char *user_agent;
-};
-
-struct response_header {
-    int status_code;
-    char extension_code[3];
-    char *reason;
-    char *content_type;
-};
-
-int send_response_header(struct response_header *header, int fd) {
-    const int buff_size = 512;
-    char buff[buff_size];
-    char *msg = "OK";
-    if(header->status_code != 200)
-        msg = header->reason;
-
-    int written = snprintf(
-            buff, buff_size, "HTTP/1.1 %3d %s"CRLF, header->status_code, msg);
-    send(fd, buff, written, MSG_MORE);
-    written = snprintf(buff, buff_size, "Content-Type: %s"CRLF, header->content_type);
-    send(fd, buff, written, MSG_MORE);
-    return 0;
-}
-
-void close_header(int fd) {
-    send(fd, CRLF, sizeof(CRLF)-1, 0);
-}
-
-int parse_request(struct request_header *header, char *buff, size_t buff_size){
-    char *line = strtok(buff, " ");
-    if(!strcmp(line, "GET"))
-        header->metod = GET;
-    else if(!strcmp(line, "HEAD"))
-        header->metod = HEAD;
-    else if(!strcmp(line, "POST"))
-        header->metod = POST;
-    else if(!strcmp(line, "PUT"))
-        header->metod = PUT;
-    else if(!strcmp(line, "DELETE"))
-        header->metod = DELETE;
-    else if(!strcmp(line, "CONNECT"))
-        header->metod = CONNECT;
-    else if(!strcmp(line, "OPTIONS"))
-        header->metod = OPTIONS;
-    else if(!strcmp(line, "TRACE"))
-        header->metod = TRACE;
-    else if(!strcmp(line, "PATCH"))
-        header->metod = PATCH;
-    header->file = strtok(0, " ");
-    strtok(0, "/");
-    line = strtok(0, CRLF);
-
-    char *remainder = 0;
-    header->version = strtof(line, &remainder);
-    /* malformed HTML/1.1 or whatever */
-    if(line == remainder) return 1;
-
-    return 0;
-}
-
 int main(int argc, const char **argv) {
     int sock_fd, port_no = 80, opt = 1;
     struct sockaddr_in serv_addr;
     socklen_t socklen = sizeof(serv_addr);
+
+    /* this is garbage and I want to vomit */
+    struct hmap mimes_hmap = {0};
+    build_mimes_hmap(&mimes_hmap);
 
     if(argc == 2){
         errno = 0;
@@ -113,6 +40,8 @@ int main(int argc, const char **argv) {
                   "inclusively\n");
         }
     }
+
+    printf("starting server on 0.0.0.0:%d\n", port_no);
 
     /* AF_INET means web, sockstream means like a file
      * 0 asks the kernel to chose the protocol TCP in this case */
@@ -132,12 +61,14 @@ int main(int argc, const char **argv) {
 
     if((bind(sock_fd, (struct sockaddr*)&serv_addr, sizeof(serv_addr))) < 0)
         panic("Could not bind address\n");
-    if(listen(sock_fd, 2) != 0)
+    if(listen(sock_fd, 256) != 0)
         panic("Could not set the socket in passive mode\n");
     /* ready to start serving */
 
+    printf("started!\n");
+
     char buff[BUFFSIZE];
-    while(1) {
+    for(;;) {
         int file;
         int new_fd = accept(sock_fd, (struct sockaddr*)&serv_addr, &socklen);
         struct request_header request = {0};
@@ -150,7 +81,7 @@ int main(int argc, const char **argv) {
 
         printf("%s\n", buff);
 
-        parse_request(&request, buff, BUFFSIZE);
+        request_header_parse(&request, buff, BUFFSIZE);
 
         response.status_code = 200;
         response.content_type = "text/html;";
@@ -161,6 +92,18 @@ int main(int argc, const char **argv) {
         }
         else {
             file = open(request.file, O_RDONLY);
+
+            strtok(request.file, ".");
+            char *extention = strtok(0, "/");
+            char *type = 0;
+
+            if(extention) {
+                type = hmap_get(&mimes_hmap, extention);
+            }
+            if(type) {
+                response.content_type = type;
+                printf("%s || %s\n", extention, type);
+            }
         }
 
         if(file == -1) {
@@ -168,9 +111,10 @@ int main(int argc, const char **argv) {
             response.reason = "page not found";
         }
 
+
         /* send the header */
-        send_response_header(&response, new_fd);
-        close_header(new_fd);
+        response_header_send(&response, new_fd);
+        header_close(new_fd);
 
         struct stat stat;
         fstat(file, &stat);
