@@ -37,7 +37,7 @@ int serv_setup(int port_no, int *sock_fd, struct sockaddr_in *serv_addr) {
         return 1;
     }
 
-    memset(&serv_addr, 0, socklen);
+    memset(serv_addr, 0, socklen);
 
     /* internet socket */
     serv_addr->sin_family = AF_INET;
@@ -46,7 +46,7 @@ int serv_setup(int port_no, int *sock_fd, struct sockaddr_in *serv_addr) {
     /* address on the server */
     serv_addr->sin_addr.s_addr = INADDR_ANY;
 
-    if((bind(*sock_fd, (struct sockaddr*)&serv_addr, socklen)) < 0) {
+    if((bind(*sock_fd, (struct sockaddr*)serv_addr, socklen)) < 0) {
         close(*sock_fd);
         return 1;
     }
@@ -64,21 +64,29 @@ int main(int argc, const char **argv) {
     int port_no = 80;
     struct sockaddr_in serv_addr;
     socklen_t socklen = sizeof(struct sockaddr_in);
+    const char *basedir;
+    size_t basedir_len;
 
     int serv_fd;
 
-    if(argc == 2){
-        errno = 0;
+    errno = 0;
+    if(argc == 3){
         int tmp = (int)strtoul(argv[1], NULL, 10);
-        if(errno) panic(0);
-        if(tmp > 0 && tmp <= 65535) port_no = tmp;
-        else {
-            errno = 33;  /* EDOM */
-            panic("usage: sv <port>\nport needs to be between 1 and 65535"
-                  "inclusively\n");
-        }
+        if(errno == 1 && (tmp > 0 && tmp <= 65535)) {
+            fprintf(stderr,
+                    "port(%d) must be an integer between 1 and 65535",
+                    tmp);
+            return -1;
+        };
+        basedir = argv[2];
+        basedir_len = strlen(basedir);
+        port_no = tmp;
     }
-
+    else {
+        errno = 33;  /* EDOM */
+        panic("usage: sv <port> <base dir>\nport needs to be between"
+              " 1 and 65535 inclusively\n");
+    }
 
     printf("starting server on 0.0.0.0:%d\n", port_no);
     if(serv_setup(port_no, &serv_fd, &serv_addr)) {
@@ -92,12 +100,16 @@ int main(int argc, const char **argv) {
 
     printf("started!\n");
 
-    char buff[BUFFSIZE];
+    char buff[BUFFSIZE]={0};
+    char path_buff[BUFFSIZE]={0};
+    memcpy(path_buff, basedir, basedir_len);
+    path_buff[basedir_len] = '/';
     for(;;) {
-        int file;
+        int file=-1;
         int new_fd = accept(serv_fd, (struct sockaddr*)&serv_addr, &socklen);
         struct request_header request = {0};
         struct response_header response = {0};
+        char index[] = "index.html";
 
         if(!read(new_fd, buff, BUFFSIZE)) {
             close(new_fd);
@@ -112,24 +124,30 @@ int main(int argc, const char **argv) {
         response.content_type = "text/html;";
 
         request.file++;
-        if(!strncmp(request.file, "", 2)) {
-            file = open("index.html", O_RDONLY);
+        size_t file_len = strlen(request.file);
+        if(file_len == 0) {
+            request.file = index;
+            file_len = 10;
         }
-        else {
-            file = open(request.file, O_RDONLY);
+        memcpy(path_buff + basedir_len + 1, request.file, file_len);
+        path_buff[basedir_len + 1 + file_len] = '\0';
 
-            strtok(request.file, ".");
-            char *extention = strtok(0, "/");
-            char *type = 0;
 
-            if(extention) {
-                type = hmap_get(&mimes_hmap, extention);
-            }
-            if(type) {
-                response.content_type = type;
-                printf("%s || %s\n", extention, type);
-            }
+
+        /* extract MIME information */
+        strtok(request.file, ".");
+        char *extention = strtok(0, "/");
+        char *type = 0;
+
+        if(extention) {
+            type = hmap_get(&mimes_hmap, extention);
         }
+        if(type) {
+            response.content_type = type;
+            printf("%s || %s\n", extention, type);
+        }
+        /* open the file */
+        file = open(path_buff, O_RDONLY);
 
         if(file == -1) {
             response.status_code = 404;
