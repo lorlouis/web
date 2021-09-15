@@ -20,14 +20,52 @@ void panic(char* str) {
     exit(EXIT_FAILURE);
 }
 
-int main(int argc, const char **argv) {
-    int sock_fd, port_no = 80, opt = 1;
-    struct sockaddr_in serv_addr;
-    socklen_t socklen = sizeof(serv_addr);
+/* sets up the socket and starts listening on port_no
+ * 0 normal
+ * 1 err*/
+int serv_setup(int port_no, int *sock_fd, struct sockaddr_in *serv_addr) {
 
-    /* this is garbage and I want to vomit */
-    struct hmap mimes_hmap = {0};
-    build_mimes_hmap(&mimes_hmap);
+    int opt = 1;
+    socklen_t socklen = sizeof(*serv_addr);
+
+    /* AF_INET means web, sockstream means like a file
+     * 0 asks the kernel to chose the protocol TCP in this case */
+    if((*sock_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+        return 1;
+    if((setsockopt(*sock_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(int)))<0) {
+        close(*sock_fd);
+        return 1;
+    }
+
+    memset(&serv_addr, 0, socklen);
+
+    /* internet socket */
+    serv_addr->sin_family = AF_INET;
+    /* convert host byte order to network byte order (short) */
+    serv_addr->sin_port = htons(port_no);
+    /* address on the server */
+    serv_addr->sin_addr.s_addr = INADDR_ANY;
+
+    if((bind(*sock_fd, (struct sockaddr*)&serv_addr, socklen)) < 0) {
+        close(*sock_fd);
+        return 1;
+    }
+    if(listen(*sock_fd, 256) != 0) {
+        close(*sock_fd);
+        return 1;
+    }
+    /* ready to start serving */
+    return 0;
+}
+
+int main(int argc, const char **argv) {
+
+    /* check params */
+    int port_no = 80;
+    struct sockaddr_in serv_addr;
+    socklen_t socklen = sizeof(struct sockaddr_in);
+
+    int serv_fd;
 
     if(argc == 2){
         errno = 0;
@@ -41,36 +79,23 @@ int main(int argc, const char **argv) {
         }
     }
 
+
     printf("starting server on 0.0.0.0:%d\n", port_no);
+    if(serv_setup(port_no, &serv_fd, &serv_addr)) {
+        perror("");
+        return -1;
+    }
 
-    /* AF_INET means web, sockstream means like a file
-     * 0 asks the kernel to chose the protocol TCP in this case */
-    if((sock_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-        panic("Could not open socket");
-    if((setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(int))) < 0)
-        panic("Could not reuse socket");
-
-    memset(&serv_addr, 0, sizeof(serv_addr));
-
-    /* internet socket */
-    serv_addr.sin_family = AF_INET;
-    /* convert host byte order to network byte order (short) */
-    serv_addr.sin_port = htons(port_no);
-    /* address on the server */
-    serv_addr.sin_addr.s_addr = INADDR_ANY;
-
-    if((bind(sock_fd, (struct sockaddr*)&serv_addr, sizeof(serv_addr))) < 0)
-        panic("Could not bind address\n");
-    if(listen(sock_fd, 256) != 0)
-        panic("Could not set the socket in passive mode\n");
-    /* ready to start serving */
+    /* this is garbage and I want to vomit */
+    struct hmap mimes_hmap = {0};
+    build_mimes_hmap(&mimes_hmap);
 
     printf("started!\n");
 
     char buff[BUFFSIZE];
     for(;;) {
         int file;
-        int new_fd = accept(sock_fd, (struct sockaddr*)&serv_addr, &socklen);
+        int new_fd = accept(serv_fd, (struct sockaddr*)&serv_addr, &socklen);
         struct request_header request = {0};
         struct response_header response = {0};
 
@@ -123,7 +148,8 @@ int main(int argc, const char **argv) {
         close(file);
         close(new_fd);
     }
-    close(sock_fd);
+    /* close the socket */
+    close(serv_fd);
 
     return 0;
 }
