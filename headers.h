@@ -8,6 +8,8 @@
 
 #define CRLF "\xd\xa"
 
+#define HEADER_BUFF_SIZE 512
+
 enum http_method {
     GET,
     HEAD,
@@ -30,7 +32,6 @@ struct request_header {
 
 struct response_header {
     int status_code;
-    char extension_code[3];
     char *reason;
     char *content_type;
 };

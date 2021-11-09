@@ -1,11 +1,14 @@
 #include "headers.h"
 
 int response_header_send(struct response_header *header, int fd) {
-    const int buff_size = 512;
+    const int buff_size = HEADER_BUFF_SIZE;
     char buff[buff_size];
     char *msg = "OK";
-    if(header->status_code != 200)
+    if(header->reason)
         msg = header->reason;
+    if(!header->content_type) {
+        header->content_type = "application/octet-stream";
+    }
 
     int written = snprintf(
             buff, buff_size, "HTTP/1.1 %3d %s"CRLF, header->status_code, msg);
