@@ -15,6 +15,7 @@
 #include "mimes.h"
 
 #define BUFFSIZE 4096
+#define ACCEPT_Q_SIZE 256
 
 /* hashmap containing the mimes (initialized in main) */
 struct hmap mimes_hmap = {0};
@@ -78,8 +79,13 @@ size_t send_str(
         const char *mime,
         const char *data, size_t data_size,
         int sock) {
-
+    struct iovec page[2] = {0};
     struct response_header response;
+    size_t ret;
+
+    page[1].iov_base = (void*)data;
+    page[1].iov_len = data_size;
+
     if(!mime) {
         response.content_type = "text/html";
     }
@@ -87,11 +93,18 @@ size_t send_str(
     response.reason = msg;
 
     /* send the header */
-    response_header_send(&response, sock);
-    header_close(sock);
+    page[0].iov_base = malloc(BUFFSIZE);
+    if(!page[0].iov_base) return 0;
+    page[0].iov_len = response_header_write(&response, &page[0], BUFFSIZE);
+    if(!page[0].iov_len) {
+        free(page[0].iov_base);
+        return 0;
+    }
 
     /* TODO handle err on write */
-    return write(sock, data, data_size);
+    ret = writev(sock, page, 2);
+    free(page[0].iov_base);
+    return ret-page[0].iov_len;
 }
 
 /* Tries to send count char of fd
@@ -104,16 +117,53 @@ size_t send_file(
         int fd, size_t count,
         int sock) {
 
+    size_t ret;
     struct response_header response;
+
     response.status_code = code;
     response.reason = msg;
     response.content_type = mime;
 
-    response_header_send(&response, sock);
-    header_close(sock);
+    int nb_vecs = 1;
 
-    /* send a file */
-    return sendfile(sock, fd, 0, count);
+    nb_vecs += count / BUFFSIZE;
+    if((count % BUFFSIZE))
+        nb_vecs++;
+
+    struct iovec *page = malloc(sizeof(struct iovec) * nb_vecs);
+    if(!page) return 0;
+    for(int i = 0; i < nb_vecs; i++) {
+        page[i].iov_base = malloc(BUFFSIZE);
+        if(!page[i].iov_base) {
+            for(int j = 0; j < i; j++) {
+                free(page[j].iov_base);
+            }
+            free(page);
+            return 0;
+        }
+        page[i].iov_len = BUFFSIZE;
+    }
+    /* headers */
+    page[0].iov_len = response_header_write(&response, &page[0], BUFFSIZE);
+    if(!page[0].iov_len) {
+        goto faliure;
+    }
+    if(readv(fd, &page[1], nb_vecs-1) != count) {
+        goto faliure;
+    }
+    ret = writev(sock, page, nb_vecs);
+    ret -= page[0].iov_len;
+    for(int i = 0; i < nb_vecs; i++) {
+        free(page[i].iov_base);
+    }
+    free(page);
+    return ret;
+faliure:
+    for(int i = 0; i < nb_vecs; i++) {
+        free(page[i].iov_base);
+    }
+    free(page);
+    return 0;
 }
 
 /* Tries to send a whole file
@@ -176,7 +226,7 @@ int serv_setup(int port_no, int *sock_fd, struct sockaddr_in *serv_addr) {
         close(*sock_fd);
         return 1;
     }
-    if(listen(*sock_fd, 256) != 0) {
+    if(listen(*sock_fd, ACCEPT_Q_SIZE) != 0) {
         close(*sock_fd);
         return 1;
     }
@@ -206,12 +256,12 @@ int handle_conn(int sock) {
     memcpy(path_buff, basedir, basedir_len);
     path_buff[basedir_len] = '/';
 
-
     /* nothing to read */
     if(!read(sock, buff, BUFFSIZE)) {
         close(sock);
         return -1;
     }
+    /* TODO handle requests larger then BUFFSIZE */
 
     printf("%s\n", buff);
 
@@ -321,9 +371,8 @@ int main(int argc, const char **argv) {
     }
     printf("started!\n");
     /* ###########################Start Serving############################# */
-    /* server loop */
     for(;;) {
-        int new_fd = accept(serv_fd, (struct sockaddr*)&serv_addr, &socklen);
+        int new_fd = accept(serv_fd, 0, 0);
         if(handle_conn(new_fd)) {
             puts("An error occured on a connection (empty read)");
         }

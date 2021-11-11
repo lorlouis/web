@@ -1,6 +1,7 @@
 #ifndef HEADERS_H
 #define HEADERS_H 1
 
+#include <sys/uio.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <stdio.h>
@@ -36,9 +37,10 @@ struct response_header {
     char *content_type;
 };
 
-int response_header_send(struct response_header *header, int fd);
-
-void header_close(int fd);
+size_t response_header_write(
+        struct response_header *header,
+        struct iovec *vec,
+        size_t vec_size);
 
 int request_header_parse(struct request_header *header, char *buff, size_t buff_size);
 #endif

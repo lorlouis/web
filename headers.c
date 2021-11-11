@@ -1,8 +1,9 @@
 #include "headers.h"
 
-int response_header_send(struct response_header *header, int fd) {
-    const int buff_size = HEADER_BUFF_SIZE;
-    char buff[buff_size];
+size_t response_header_write(
+        struct response_header *header,
+        struct iovec *vec,
+        size_t vec_size) {
     char *msg = "OK";
     if(header->reason)
         msg = header->reason;
@@ -11,16 +12,15 @@ int response_header_send(struct response_header *header, int fd) {
     }
 
     int written = snprintf(
-            buff, buff_size, "HTTP/1.1 %3d %s"CRLF, header->status_code, msg);
-    send(fd, buff, written, MSG_MORE);
-    written = snprintf(buff, buff_size, "Content-Type: %s" CRLF,
-                       header->content_type);
-    send(fd, buff, written, MSG_MORE);
-    return 0;
-}
-
-void header_close(int fd) {
-    send(fd, CRLF, sizeof(CRLF)-1, 0);
+            vec->iov_base, vec_size,
+            "HTTP/1.1 %3d %s"CRLF
+            "Content-Type: %s"CRLF"%.*s",
+            header->status_code,
+            msg,
+            header->content_type,
+            (int)sizeof(CRLF)-1,
+            CRLF);
+    return written;
 }
 
 int request_header_parse(struct request_header *header, char *buff, size_t buff_size){
