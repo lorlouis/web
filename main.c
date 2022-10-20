@@ -32,7 +32,7 @@ void sigint_halder(int sig) {
         KEEP_RUNNING = false;
     }
     /* reinstate the signal handler */
-    signal(SIGINT, sigint_halder);
+    signal(sig, sigint_halder);
 }
 
 /* hashmap containing the mimes (initialized in main) */
@@ -152,7 +152,7 @@ static ssize_t send_large_file(
         int total_blocks,
         struct response_header response) {
 
-    size_t write_size;
+    size_t write_size = 0;
     size_t ret;
     struct iovec buff;
 
@@ -160,7 +160,7 @@ static ssize_t send_large_file(
     buff.iov_len = BUFFSIZE;
     if(!buff.iov_base) return -1;
 
-    if(response_header_write(&response, &buff) == 0) {
+    if((buff.iov_len = response_header_write(&response, &buff)) == 0) {
         goto failure;
     }
     if(write(sock, buff.iov_base, buff.iov_len) < 0) {
@@ -227,6 +227,11 @@ ssize_t send_file(
 
     /* headers */
     page[0].iov_base = malloc(BUFFSIZE);
+    if(!page[0].iov_base) {
+        free(page);
+        return -1;
+    }
+
     page[0].iov_len = BUFFSIZE;
     page[0].iov_len = response_header_write(&response, &page[0]);
     if(!page[0].iov_len) {
@@ -247,7 +252,6 @@ ssize_t send_file(
         cur_count -= BUFFSIZE;
     }
 
-
     ssize_t read = readv(fd, &page[1], nb_vecs-1);
     if( read != count) {
         if(read < 0) {
@@ -256,6 +260,9 @@ ssize_t send_file(
         goto failure;
     }
     ret = writev(sock, page, nb_vecs);
+    if(ret < 0) {
+        return -1;
+    }
     ret -= page[0].iov_len;
 
     for(int i = 0; i < nb_vecs; i++) {
@@ -287,7 +294,6 @@ ssize_t send_whole_file(
         perror("fstat err: ");
         return -1;
     }
-    printf("file_size: %ld\n", stat.st_size);
 
     return send_file(code, msg, mime, fd, stat.st_size, sock);
 }
@@ -378,9 +384,7 @@ int handle_conn(int sock) {
         close(sock);
         return -1;
     }
-    /* TODO handle requests larger then BUFFSIZE */
-
-    printf("%s\n", buff);
+    /* TODO handle requests larger than BUFFSIZE */
 
     /* check if the content isn't GET */
     if(strncmp(buff, "GET ", 4)) {
@@ -390,7 +394,9 @@ int handle_conn(int sock) {
         return 0;
     }
 
-    request_header_parse(&request, buff, BUFFSIZE);
+    if(request_header_parse(&request, buff, BUFFSIZE) < 0) {
+        return -1;
+    }
 
     request.file++;
     file_len = strlen(request.file);
@@ -457,10 +463,12 @@ int handle_conn(int sock) {
 int main(int argc, const char **argv) {
     int port_no;
     struct sockaddr_in serv_addr;
-    socklen_t socklen = sizeof(struct sockaddr_in);
     int serv_fd;
 
     signal(SIGINT, sigint_halder);
+#ifndef NDEBUG
+    signal(SIGPIPE, sigint_halder);
+#endif
 
     /* check params */
     if(argc == 3){

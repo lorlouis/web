@@ -41,5 +41,6 @@ size_t response_header_write(
         struct response_header *header,
         struct iovec *vec);
 
+/* returns the length written */
 int request_header_parse(struct request_header *header, char *buff, size_t buff_size);
 #endif
