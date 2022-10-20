@@ -2,19 +2,16 @@
 
 size_t response_header_write(
         struct response_header *header,
-        struct iovec *vec,
-        size_t vec_size) {
+        struct iovec *vec) {
     char *msg = "OK";
     if(header->reason)
         msg = header->reason;
     if(!header->content_type) {
         header->content_type = "application/octet-stream";
     }
-
     int written = snprintf(
-            vec->iov_base, vec_size,
-            "HTTP/1.1 %3d %s"CRLF
-            "Content-Type: %s"CRLF"%.*s",
+            vec->iov_base, vec->iov_len,
+            "HTTP/1.1 %3d %s"CRLF"Content-Type: %s"CRLF"%.*s",
             header->status_code,
             msg,
             header->content_type,

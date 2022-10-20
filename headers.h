@@ -39,8 +39,7 @@ struct response_header {
 
 size_t response_header_write(
         struct response_header *header,
-        struct iovec *vec,
-        size_t vec_size);
+        struct iovec *vec);
 
 int request_header_parse(struct request_header *header, char *buff, size_t buff_size);
 #endif

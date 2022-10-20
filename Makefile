@@ -17,7 +17,6 @@ TESTS_OUT = test
 
 OUT = sv
 
-
 ENTRYPOINT_O = $(patsubst %,$(BUILD_DIR)/%,$(_ENTRYPOINT_O))
 
 OBJS = $(patsubst %,$(BUILD_DIR)/%,$(_OBJS))
@@ -37,7 +36,7 @@ $(TESTS_OUT): $(TESTS_ENTRYPOINT_O) $(TESTS_OBJS) $(OBJS)
 	$(CC) -g $(TESTS_ENTRYPOINT_O) $(TESTS_OBJS) $(OBJS) -o $(TESTS_OUT) $(LFLAGS)
 
 rel: $(ENTRYPOINT_O) $(OBJS)
-	$(CC) -O3 $(OBJS) -o $(OUT) $(LFLAGS)
+	$(CC) -O2 $(OBJS) -o $(OUT) $(LFLAGS)
 
 $(BUILD_DIR)/%.o: %.c
 	$(MKDIR_P) $(BUILD_DIR)
