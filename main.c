@@ -15,6 +15,7 @@
 
 #include "headers.h"
 #include "mimes.h"
+#include "logging.h"
 
 #define BUFFSIZE 4096
 #define MAX_BUFF_COUNT_FAST 128
@@ -129,7 +130,10 @@ size_t send_str(
     /* send the header */
     page[0].iov_base = calloc(BUFFSIZE, 1);
     page[0].iov_len = BUFFSIZE;
-    if(!page[0].iov_base) return -1;
+    if(!page[0].iov_base) {
+        logging(ERR, "unable to alloc new iovec buffer");
+        return -1;
+    }
     page[0].iov_len = response_header_write(&response, &page[0]);
     if(!page[0].iov_len) {
         free(page[0].iov_base);
@@ -156,6 +160,7 @@ static ssize_t send_large_file(
     size_t ret;
     struct iovec buff;
 
+
     buff.iov_base = malloc(BUFFSIZE);
     buff.iov_len = BUFFSIZE;
     if(!buff.iov_base) return -1;
@@ -166,14 +171,16 @@ static ssize_t send_large_file(
     if(write(sock, buff.iov_base, buff.iov_len) < 0) {
         goto failure;
     }
+    // reset the size of buff for the file
+    buff.iov_len = BUFFSIZE;
 
     size_t cur_count = count;
     for(int i = 0; i < total_blocks -1; i++) {
         if(read(fd, buff.iov_base, MIN(buff.iov_len, cur_count)) < 0) {
             goto failure;
         }
-
-        if((ret = write(sock, buff.iov_base, MIN(buff.iov_len, cur_count))) < 0) {
+        ret = write(sock, buff.iov_base, MIN(buff.iov_len, cur_count));
+        if(ret <= 0) {
             goto failure;
         }
         write_size += ret;
@@ -181,6 +188,9 @@ static ssize_t send_large_file(
     }
 
     free(buff.iov_base);
+    if(count != write_size) {
+        logging(DEBUG, "sent and file size don't match %ld != %ld", write_size, count);
+    }
     return write_size;
 
 failure:
@@ -212,7 +222,7 @@ ssize_t send_file(
     if((count % BUFFSIZE))
         nb_vecs++;
 
-    if(nb_vecs > MAX_BUFF_COUNT_FAST) {
+    if(nb_vecs > MAX_BUFF_COUNT_FAST || 1) {
         return send_large_file(
                 fd,
                 count,
@@ -357,10 +367,13 @@ int serv_setup(int port_no, int *sock_fd, struct sockaddr_in *serv_addr) {
     return 0;
 }
 
-
+/* handles a connection
+ * Returns
+ *  -1 on err */
 int handle_conn(int sock) {
     /* depends on basedir, basedir_len and mimes_hmap */
     char buff[BUFFSIZE]={0};
+    size_t buff_len;
     char path_buff[BUFFSIZE]={0};
     int file=-1;
 
@@ -379,10 +392,12 @@ int handle_conn(int sock) {
     memcpy(path_buff, basedir, basedir_len);
     path_buff[basedir_len] = '/';
 
+    buff_len = read(sock, buff, BUFFSIZE);
     /* nothing to read */
-    if(!read(sock, buff, BUFFSIZE)) {
+    if(!buff_len) {
         close(sock);
-        return -1;
+        logging(WARN, "nothing to read on connection %d, closing", sock);
+        return 0;
     }
     /* TODO handle requests larger than BUFFSIZE */
 
@@ -390,6 +405,12 @@ int handle_conn(int sock) {
     if(strncmp(buff, "GET ", 4)) {
         /* unsuported protocol */
         send_405(sock);
+
+        for(int i = 0; i<buff_len; i++) {
+            putchar(buff[i]);
+        }
+        puts("");
+
         close(sock);
         return 0;
     }
@@ -490,17 +511,17 @@ int main(int argc, const char **argv) {
         return -1;
     }
 
-    puts("Building MIME type hashmap");
+    logging(DEBUG, "Building MIME type hashmap");
     /* initialise the mime hashmap */
     build_mimes_hmap(&mimes_hmap);
 
-    printf("starting server on 0.0.0.0:%d\n", port_no);
+    logging(INFO,"starting server on 0.0.0.0:%d", port_no);
     /* setup socket for listen */
     if(serv_setup(port_no, &serv_fd, &serv_addr)) {
         perror("");
         return -1;
     }
-    printf("started!\n");
+    logging(INFO, "server started");
 
 
     /* ###########################Start Serving############################# */
@@ -516,17 +537,14 @@ int main(int argc, const char **argv) {
 
         code = select(nfds+1, &read, 0, 0, &timeval);
         if(code == -1) {
-            perror("select err");
             goto cleanup;
         }
         else if(code == 0) {
-            puts("select timeout");
             continue;
         }
-        puts("accept");
         int new_fd = accept(serv_fd, 0, 0);
         if(handle_conn(new_fd)) {
-            puts("An error occured on a connection (empty read)");
+            logging(WARN, "An error occurred on connection %d (empty read)", new_fd);
         }
     }
 cleanup:

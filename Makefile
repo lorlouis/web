@@ -1,11 +1,11 @@
 ENTRYPOINT = main.c
 _ENTRYPOINT_O = main.o
-SOURCE = headers.c mimes.c
-_OBJS  = headers.o mimes.o
+SOURCE = headers.c mimes.c logging.c
+_OBJS  = headers.o mimes.o logging.o
 HEADER =
 CC = gcc
 #FLAGS = -g -c -Wall -fanalyzer
-FLAGS = -g -c -Wall
+FLAGS = -gdwarf -c -Wall
 LFLAGS =
 BUILD_DIR = build
 MKDIR_P = mkdir -p
