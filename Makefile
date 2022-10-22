@@ -4,9 +4,9 @@ SOURCE = headers.c mimes.c logging.c
 _OBJS  = headers.o mimes.o logging.o
 HEADER =
 CC = gcc
-#FLAGS = -g -c -Wall -fanalyzer
-FLAGS = -gdwarf -c -Wall
-LFLAGS =
+FLAGS = -ggdb -c -Wall -fanalyzer
+#FLAGS = -gdwarf -c -Wall
+LFLAGS = -lssl -lcrypto
 BUILD_DIR = build
 MKDIR_P = mkdir -p
 

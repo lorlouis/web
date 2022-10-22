@@ -13,6 +13,10 @@
 #include <assert.h>
 #include <stdbool.h>
 
+#include <openssl/bio.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+
 #include "headers.h"
 #include "mimes.h"
 #include "logging.h"
@@ -24,6 +28,25 @@
 static volatile bool KEEP_RUNNING = true;
 
 #define MIN(a,b) (a < b ? a : b)
+
+ssize_t SSL_writev(SSL *ssl, const struct iovec *iov, int iovcnt) {
+    ssize_t size = 0;
+    ssize_t ret;
+    for(int i = 0; i < iovcnt; i++) {
+        ret = SSL_write(ssl, iov[i].iov_base, iov[i].iov_len);
+        if(ret < 0) {
+            return ret;
+        }
+        size += ret;
+    }
+    return size;
+}
+
+void SSL_cleanup(SSL *ssl) {
+    int fd = SSL_get_fd(ssl);
+    SSL_free(ssl);
+    close(fd);
+}
 
 void sigint_halder(int sig) {
     if(sig == SIGINT) {
@@ -113,7 +136,7 @@ size_t send_str(
         const char *mime,
         const char *data,
         size_t data_size,
-        int sock) {
+        SSL *sock) {
     struct iovec page[2] = {0};
     struct response_header response;
     size_t ret;
@@ -141,7 +164,7 @@ size_t send_str(
     }
 
     /* TODO handle err on write */
-    ret = writev(sock, page, 1);
+    ret = SSL_writev(sock, page, 1);
     free(page[0].iov_base);
     return ret-page[0].iov_len;
 }
@@ -152,7 +175,7 @@ size_t send_str(
 static ssize_t send_large_file(
         int fd,
         size_t count,
-        int sock,
+        SSL *sock,
         int total_blocks,
         struct response_header response) {
 
@@ -168,7 +191,7 @@ static ssize_t send_large_file(
     if((buff.iov_len = response_header_write(&response, &buff)) == 0) {
         goto failure;
     }
-    if(write(sock, buff.iov_base, buff.iov_len) < 0) {
+    if(SSL_write(sock, buff.iov_base, buff.iov_len) < 0) {
         goto failure;
     }
     // reset the size of buff for the file
@@ -179,7 +202,7 @@ static ssize_t send_large_file(
         if(read(fd, buff.iov_base, MIN(buff.iov_len, cur_count)) < 0) {
             goto failure;
         }
-        ret = write(sock, buff.iov_base, MIN(buff.iov_len, cur_count));
+        ret = SSL_write(sock, buff.iov_base, MIN(buff.iov_len, cur_count));
         if(ret <= 0) {
             goto failure;
         }
@@ -208,7 +231,7 @@ ssize_t send_file(
         char *mime,
         int fd,
         size_t count,
-        int sock) {
+        SSL *sock) {
 
     size_t ret;
     struct response_header response;
@@ -269,7 +292,7 @@ ssize_t send_file(
         }
         goto failure;
     }
-    ret = writev(sock, page, nb_vecs);
+    ret = SSL_writev(sock, page, nb_vecs);
     if(ret < 0) {
         return -1;
     }
@@ -297,7 +320,7 @@ failure:
 ssize_t send_whole_file(
         int code, char *msg,
         char *mime,
-        int fd, int sock) {
+        int fd, SSL *sock) {
     /* send a file */
     struct stat stat;
     if(fstat(fd, &stat) == -1) {
@@ -308,21 +331,21 @@ ssize_t send_whole_file(
     return send_file(code, msg, mime, fd, stat.st_size, sock);
 }
 
-int send_404(int sock) {
+int send_404(SSL *sock) {
     return send_str(
             404, "page not found", 0,
             NOT_FOUND_PAGE, NOT_FOUND_PAGE_LEN,
             sock);
 }
 
-int send_405(int sock) {
+int send_405(SSL *sock) {
     return send_str(
             405, "this server only supports http GET", 0,
             NOT_FOUND_PAGE, NOT_FOUND_PAGE_LEN,
             sock);
 }
 
-int send_500(int sock) {
+int send_500(SSL *sock) {
     return send_str(
             500, "server error", 0,
             SERVER_ERROR_PAGE, SERVER_ERROR_PAGE_LEN,
@@ -357,9 +380,11 @@ int serv_setup(int port_no, int *sock_fd, struct sockaddr_in *serv_addr) {
 
     if((bind(*sock_fd, (struct sockaddr*)serv_addr, socklen)) < 0) {
         close(*sock_fd);
+        logging(ERR, "unable to bind %d: `%s`", serv_addr->sin_port, strerror(errno));
         return 1;
     }
     if(listen(*sock_fd, ACCEPT_Q_SIZE) != 0) {
+        logging(ERR, "unable to listen on port %d: `%s`", serv_addr->sin_port, strerror(errno));
         close(*sock_fd);
         return 1;
     }
@@ -370,10 +395,10 @@ int serv_setup(int port_no, int *sock_fd, struct sockaddr_in *serv_addr) {
 /* handles a connection
  * Returns
  *  -1 on err */
-int handle_conn(int sock) {
+int handle_conn(SSL *sock) {
     /* depends on basedir, basedir_len and mimes_hmap */
     char buff[BUFFSIZE]={0};
-    size_t buff_len;
+    ssize_t buff_len;
     char path_buff[BUFFSIZE]={0};
     int file=-1;
 
@@ -391,27 +416,44 @@ int handle_conn(int sock) {
 
     memcpy(path_buff, basedir, basedir_len);
     path_buff[basedir_len] = '/';
+    int ssl_ret;
 
-    buff_len = read(sock, buff, BUFFSIZE);
+    while((buff_len = SSL_read(sock, buff, BUFFSIZE)) < 0) {
+        ssl_ret = SSL_get_error(sock, buff_len);
+        /*
+        if(buff_len < 0) {
+            logging(ERR, "SSL_read err");
+            SSL_cleanup(sock);
+            return -1;
+        }
+        */
+
+        if(ssl_ret != SSL_ERROR_WANT_READ) {
+            logging(ERR, "SSL_read err %d", ssl_ret);
+            SSL_cleanup(sock);
+            return -1;
+        }
+    }
+
     /* nothing to read */
     if(!buff_len) {
-        close(sock);
+        int fd = SSL_get_fd(sock);
+        SSL_free(sock);
+        close(fd);
         logging(WARN, "nothing to read on connection %d, closing", sock);
         return 0;
     }
+
+
     /* TODO handle requests larger than BUFFSIZE */
 
     /* check if the content isn't GET */
     if(strncmp(buff, "GET ", 4)) {
         /* unsuported protocol */
+        puts(buff);
         send_405(sock);
-
-        for(int i = 0; i<buff_len; i++) {
-            putchar(buff[i]);
-        }
-        puts("");
-
-        close(sock);
+        logging(DEBUG, "buff lenght: %ld", buff_len);
+        SSL_cleanup(sock);
         return 0;
     }
 
@@ -445,12 +487,12 @@ int handle_conn(int sock) {
             send_str(418, "I'm a tea pot", 0,
                      I_AM_A_TEAPOT, I_AM_A_TEAPOT_LEN,
                      sock);
-            close(sock);
+            SSL_cleanup(sock);
             return 0;
         }
         /* return a boring old 404 */
         send_404(sock);
-        close(sock);
+        SSL_cleanup(sock);
         return 0;
     }
     /* ##### At this point a file is found ##### */
@@ -476,10 +518,44 @@ int handle_conn(int sock) {
     }
 
     close(file);
-    close(sock);
+    SSL_cleanup(sock);
     return 0;
 }
 
+/* returns 0 on err */
+SSL_CTX* ctx_init(void) {
+    const SSL_METHOD *meth;
+    SSL_CTX *ctx;
+
+    OpenSSL_add_all_algorithms();
+    SSL_load_error_strings();
+
+    meth = TLS_server_method();
+    ctx = SSL_CTX_new(meth);
+    if(!ctx) {
+        // TODO(louis) add err message
+        ERR_print_errors_fp(stderr);
+    }
+    return ctx;
+}
+
+void load_certificates(SSL_CTX *ctx, char *cert_file, char *key_file) {
+    if(SSL_CTX_use_certificate_file(
+                ctx, cert_file, SSL_FILETYPE_PEM) <= 0) {
+        ERR_print_errors_fp(stderr);
+        abort();
+    }
+
+    if(SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0) {
+        ERR_print_errors_fp(stderr);
+        abort();
+    }
+
+    if(!SSL_CTX_check_private_key(ctx)) {
+        logging(ERR, "Private key does not match cert");
+        abort();
+    }
+}
 
 int main(int argc, const char **argv) {
     int port_no;
@@ -487,11 +563,19 @@ int main(int argc, const char **argv) {
     int serv_fd;
 
     signal(SIGINT, sigint_halder);
+    /* prevent gdb and valgrind to stop execution on SIGPIPE */
 #ifndef NDEBUG
     signal(SIGPIPE, sigint_halder);
 #endif
 
-    /* check params */
+    /* initialise openssl  */
+    SSL_library_init();
+
+    /* configure ssl */
+    SSL_CTX *ctx = ctx_init();
+    load_certificates(ctx, "cert0.pem", "cert0.pem");
+
+    /* check parameters */
     if(argc == 3){
         errno = 0;
         int tmp = (int)strtoul(argv[1], NULL, 10);
@@ -521,6 +605,7 @@ int main(int argc, const char **argv) {
         perror("");
         return -1;
     }
+
     logging(INFO, "server started");
 
 
@@ -543,12 +628,16 @@ int main(int argc, const char **argv) {
             continue;
         }
         int new_fd = accept(serv_fd, 0, 0);
-        if(handle_conn(new_fd)) {
+        SSL *ssl = SSL_new(ctx);
+        SSL_set_fd(ssl, new_fd);
+
+        if(handle_conn(ssl)) {
             logging(WARN, "An error occurred on connection %d (empty read)", new_fd);
         }
     }
 cleanup:
     /* close the socket */
     close(serv_fd);
+    SSL_CTX_free(ctx);
     return 0;
 }
