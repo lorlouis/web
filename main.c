@@ -13,13 +13,10 @@
 #include <assert.h>
 #include <stdbool.h>
 
-#include <openssl/bio.h>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
-
 #include "headers.h"
 #include "mimes.h"
 #include "logging.h"
+#include "ssl_ex.h"
 
 #define BUFFSIZE 4096
 #define MAX_BUFF_COUNT_FAST 128
@@ -28,26 +25,6 @@
 static volatile bool KEEP_RUNNING = true;
 
 #define MIN(a,b) (a < b ? a : b)
-
-ssize_t SSL_writev(SSL *ssl, const struct iovec *iov, int iovcnt) {
-    ssize_t size = 0;
-    ssize_t ret;
-    for(int i = 0; i < iovcnt; i++) {
-        ret = SSL_write(ssl, iov[i].iov_base, iov[i].iov_len);
-        if(ret < 0) {
-            return ret;
-        }
-        size += ret;
-    }
-    return size;
-}
-
-void SSL_cleanup(SSL *ssl) {
-    int fd = SSL_get_fd(ssl);
-    SSL_shutdown(ssl);
-    SSL_free(ssl);
-    close(fd);
-}
 
 void sigint_halder(int sig) {
     if(sig == SIGINT) {
