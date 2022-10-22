@@ -44,6 +44,7 @@ ssize_t SSL_writev(SSL *ssl, const struct iovec *iov, int iovcnt) {
 
 void SSL_cleanup(SSL *ssl) {
     int fd = SSL_get_fd(ssl);
+    SSL_shutdown(ssl);
     SSL_free(ssl);
     close(fd);
 }
@@ -414,6 +415,12 @@ int handle_conn(SSL *sock) {
     const size_t html_begin_size = sizeof(html_begin);
     static_assert(sizeof(html_begin) == 16, "weird compiler");
 
+    if(SSL_accept(sock) <= 0) {
+        ERR_print_errors_fp(stderr);
+        logging(ERR, "SSL_accept err");
+        return -1;
+    }
+
     memcpy(path_buff, basedir, basedir_len);
     path_buff[basedir_len] = '/';
     int ssl_ret;
@@ -437,9 +444,7 @@ int handle_conn(SSL *sock) {
 
     /* nothing to read */
     if(!buff_len) {
-        int fd = SSL_get_fd(sock);
-        SSL_free(sock);
-        close(fd);
+        SSL_cleanup(sock);
         logging(WARN, "nothing to read on connection %d, closing", sock);
         return 0;
     }
@@ -458,6 +463,7 @@ int handle_conn(SSL *sock) {
     }
 
     if(request_header_parse(&request, buff, BUFFSIZE) < 0) {
+        SSL_cleanup(sock);
         return -1;
     }
 
@@ -471,6 +477,7 @@ int handle_conn(SSL *sock) {
 
     memcpy(path_buff + basedir_len + 1, request.file, file_len);
     path_buff[basedir_len + 1 + file_len] = '\0';
+    printf("path buff: %s\n", path_buff);
 
     /* extract MIME information */
     strtok(request.file, ".");
@@ -595,7 +602,7 @@ int main(int argc, const char **argv) {
         return -1;
     }
 
-    logging(DEBUG, "Building MIME type hashmap");
+    logging(INFO, "Building MIME type hashmap");
     /* initialise the mime hashmap */
     build_mimes_hmap(&mimes_hmap);
 
@@ -630,7 +637,6 @@ int main(int argc, const char **argv) {
         int new_fd = accept(serv_fd, 0, 0);
         SSL *ssl = SSL_new(ctx);
         SSL_set_fd(ssl, new_fd);
-
         if(handle_conn(ssl)) {
             logging(WARN, "An error occurred on connection %d (empty read)", new_fd);
         }
