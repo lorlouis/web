@@ -19,6 +19,8 @@
 #include "ssl_ex.h"
 #include "default_pages.h"
 
+#include "conn.h"
+
 #define BUFFSIZE 4096
 #define MAX_BUFF_COUNT_FAST 128
 #define ACCEPT_Q_SIZE 256
@@ -531,7 +533,6 @@ int main(int argc, const char **argv) {
     }
 
     logging(INFO, "server started");
-
 
     /* ###########################Start Serving############################# */
     while(KEEP_RUNNING) {
