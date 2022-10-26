@@ -12,6 +12,9 @@ enum log_level {
     ERR,
 };
 
+/* calls strerror on errno and logs it*/
+void logging_errno(enum log_level level, char *prefix);
+
 /* log to stderr (includes newline) */
 void logging(enum log_level level, char *fmt, ...);
 

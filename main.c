@@ -56,7 +56,7 @@ size_t send_str(
         const char *mime,
         const char *data,
         size_t data_size,
-        SSL *sock) {
+        struct conn *sock) {
     struct iovec page[2] = {0};
     struct response_header response;
     size_t ret;
@@ -80,11 +80,17 @@ size_t send_str(
     page[0].iov_len = response_header_write(&response, &page[0]);
     if(!page[0].iov_len) {
         free(page[0].iov_base);
+        logging(ERR, "unable to write response header into iovec");
         return -1;
     }
 
     /* TODO handle err on write */
-    ret = SSL_writev(sock, page, 1);
+    ret = conn_writev(sock, page, 1);
+    if(ret <= 0) {
+        logging(ERR, "unable to write str response into iovec");
+        free(page[0].iov_base);
+        return -1;
+    }
     free(page[0].iov_base);
     return ret-page[0].iov_len;
 }
@@ -95,7 +101,7 @@ size_t send_str(
 static ssize_t send_large_file(
         int fd,
         size_t count,
-        SSL *sock,
+        struct conn *sock,
         int total_blocks,
         struct response_header response) {
 
@@ -111,7 +117,7 @@ static ssize_t send_large_file(
     if((buff.iov_len = response_header_write(&response, &buff)) == 0) {
         goto failure;
     }
-    if(SSL_write(sock, buff.iov_base, buff.iov_len) < 0) {
+    if(conn_write(sock, buff.iov_base, buff.iov_len) < 0) {
         goto failure;
     }
     // reset the size of buff for the file
@@ -122,7 +128,7 @@ static ssize_t send_large_file(
         if(read(fd, buff.iov_base, MIN(buff.iov_len, cur_count)) < 0) {
             goto failure;
         }
-        ret = SSL_write(sock, buff.iov_base, MIN(buff.iov_len, cur_count));
+        ret = conn_write(sock, buff.iov_base, MIN(buff.iov_len, cur_count));
         if(ret <= 0) {
             goto failure;
         }
@@ -151,7 +157,7 @@ ssize_t send_file(
         char *mime,
         int fd,
         size_t count,
-        SSL *sock) {
+        struct conn *sock) {
 
     size_t ret;
     struct response_header response;
@@ -212,7 +218,7 @@ ssize_t send_file(
         }
         goto failure;
     }
-    ret = SSL_writev(sock, page, nb_vecs);
+    ret = conn_writev(sock, page, nb_vecs);
     if(ret < 0) {
         return -1;
     }
@@ -240,34 +246,42 @@ failure:
 ssize_t send_whole_file(
         int code, char *msg,
         char *mime,
-        int fd, SSL *sock) {
+        int fd,
+        struct conn *sock) {
     /* send a file */
     struct stat stat;
     if(fstat(fd, &stat) == -1) {
-        perror("fstat err: ");
+        logging_errno(ERR, "fstat");
         return -1;
     }
 
     return send_file(code, msg, mime, fd, stat.st_size, sock);
 }
 
-int send_404(SSL *sock) {
+int send_404(struct conn *sock) {
     return send_str(
             404, "page not found", 0,
             NOT_FOUND_PAGE, NOT_FOUND_PAGE_LEN,
             sock);
 }
 
-int send_405(SSL *sock) {
+int send_405(struct conn *sock) {
     return send_str(
             405, "this server only supports http GET", 0,
             NOT_FOUND_PAGE, NOT_FOUND_PAGE_LEN,
             sock);
 }
 
-int send_500(SSL *sock) {
+int send_500(struct conn *sock) {
     return send_str(
             500, "server error", 0,
+            SERVER_ERROR_PAGE, SERVER_ERROR_PAGE_LEN,
+            sock);
+}
+
+int send_426(struct conn *sock) {
+    return send_str(
+            426, "server error", 0,
             SERVER_ERROR_PAGE, SERVER_ERROR_PAGE_LEN,
             sock);
 }
@@ -312,10 +326,8 @@ int serv_setup(int port_no, int *sock_fd, struct sockaddr_in *serv_addr) {
     return 0;
 }
 
-/* handles a connection
- * Returns
- *  -1 on err */
-int handle_conn(SSL *sock) {
+/* handles a connection */
+void handle_conn(struct conn sock) {
     /* depends on basedir, basedir_len and mimes_hmap */
     char buff[BUFFSIZE]={0};
     ssize_t buff_len;
@@ -334,38 +346,27 @@ int handle_conn(SSL *sock) {
     const size_t html_begin_size = sizeof(html_begin);
     static_assert(sizeof(html_begin) == 16, "weird compiler");
 
-    if(SSL_accept(sock) <= 0) {
-        ERR_print_errors_fp(stderr);
-        logging(ERR, "SSL_accept err");
-        return -1;
+    if(conn_init(&sock) <= 0) {
+        if(sock.type == CONN_SSL) {
+            long ret = SSL_get_verify_result(sock.data.ssl);
+            if(ret != 0) {
+                logging(INFO, "SSL_accept err %s",
+                        X509_verify_cert_error_string(ret));
+                goto cleanup;
+            }
+
+        }
+        goto cleanup;
     }
 
     memcpy(path_buff, basedir, basedir_len);
     path_buff[basedir_len] = '/';
-    int ssl_ret;
-
-    while((buff_len = SSL_read(sock, buff, BUFFSIZE)) < 0) {
-        ssl_ret = SSL_get_error(sock, buff_len);
-        /*
-        if(buff_len < 0) {
-            logging(ERR, "SSL_read err");
-            SSL_cleanup(sock);
-            return -1;
-        }
-        */
-
-        if(ssl_ret != SSL_ERROR_WANT_READ) {
-            logging(ERR, "SSL_read err %d", ssl_ret);
-            SSL_cleanup(sock);
-            return -1;
-        }
-    }
 
     /* nothing to read */
-    if(!buff_len) {
-        SSL_cleanup(sock);
+    if((buff_len = conn_read(&sock, buff, BUFFSIZE)) < 0) {
+        conn_cleanup(&sock);
         logging(WARN, "nothing to read on connection %d, closing", sock);
-        return 0;
+        goto cleanup;
     }
 
 
@@ -375,15 +376,13 @@ int handle_conn(SSL *sock) {
     if(strncmp(buff, "GET ", 4)) {
         /* unsuported protocol */
         puts(buff);
-        send_405(sock);
+        send_405(&sock);
         logging(DEBUG, "buff lenght: %ld", buff_len);
-        SSL_cleanup(sock);
-        return 0;
+        goto cleanup;
     }
 
     if(request_header_parse(&request, buff, BUFFSIZE) < 0) {
-        SSL_cleanup(sock);
-        return -1;
+        goto cleanup;
     }
 
     request.file++;
@@ -412,14 +411,13 @@ int handle_conn(SSL *sock) {
         if(!strcmp(request.file, "teapot")) {
             send_str(418, "I'm a tea pot", 0,
                      I_AM_A_TEAPOT, I_AM_A_TEAPOT_LEN,
-                     sock);
-            SSL_cleanup(sock);
-            return 0;
+                     &sock);
         }
         /* return a boring old 404 */
-        send_404(sock);
-        SSL_cleanup(sock);
-        return 0;
+        else {
+            send_404(&sock);
+        }
+        goto cleanup;
     }
     /* ##### At this point a file is found ##### */
     /* check for the mimetype in the hashmap */
@@ -434,18 +432,20 @@ int handle_conn(SSL *sock) {
             type = "text/html";
         }
         if(lseek(file, 0, SEEK_SET) <0) {
-            perror("lseek");
+            logging_errno(ERR, "lseek");
+            goto cleanup;
         }
     }
 
     /* send the file */
-    if(send_whole_file(200, 0, type, file, sock) < 0) {
-        send_500(sock);
+    if(send_whole_file(200, 0, type, file, &sock) < 0) {
+        send_500(&sock);
+        goto cleanup;
     }
 
-    close(file);
-    SSL_cleanup(sock);
-    return 0;
+cleanup:
+    conn_cleanup(&sock);
+    return;
 }
 
 /* returns 0 on err */
@@ -555,9 +555,11 @@ int main(int argc, const char **argv) {
         int new_fd = accept(serv_fd, 0, 0);
         SSL *ssl = SSL_new(ctx);
         SSL_set_fd(ssl, new_fd);
-        if(handle_conn(ssl)) {
-            logging(WARN, "An error occurred on connection %d (empty read)", new_fd);
-        }
+        struct conn conn = {0};
+        conn_new_ssl(ssl, &conn);
+
+        /* TODO(louis) multi thread */
+        handle_conn(conn);
     }
 cleanup:
     /* close the socket */

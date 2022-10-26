@@ -19,9 +19,9 @@ struct conn {
 
 void conn_cleanup(struct conn *conn);
 
-static ssize_t conn_read(struct conn *conn, void *buf, size_t size);
+ssize_t conn_read(struct conn *conn, void *buf, size_t size);
 
-static ssize_t conn_write(struct conn *conn, const void *buf, size_t size);
+ssize_t conn_write(struct conn *conn, const void *buf, size_t size);
 
 int conn_new_fd(int fd, struct conn *conn);
 
@@ -32,6 +32,8 @@ int conn_new_ssl(SSL *ssl, struct conn *conn);
  * 1 on success
  * <=0 on failure */
 int conn_init(struct conn *conn);
+
+ssize_t conn_writev(struct conn *conn, const struct iovec *iov, size_t nbv);
 
 #endif
 

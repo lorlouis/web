@@ -13,7 +13,7 @@ void conn_cleanup(struct conn *conn) {
     }
 }
 
-static ssize_t conn_read(struct conn *conn, void *buf, size_t size) {
+ssize_t conn_read(struct conn *conn, void *buf, size_t size) {
     switch(conn->type) {
         case CONN_PLAIN:
             return read(conn->data.fd, buf, size);
@@ -23,12 +23,22 @@ static ssize_t conn_read(struct conn *conn, void *buf, size_t size) {
     return -1;
 }
 
-static ssize_t conn_write(struct conn *conn, const void *buf, size_t size) {
+ssize_t conn_write(struct conn *conn, const void *buf, size_t size) {
     switch(conn->type) {
         case CONN_PLAIN:
             return write(conn->data.fd, buf, size);
         case CONN_SSL:
             return SSL_write(conn->data.ssl, buf, (int)size);
+    }
+    return -1;
+}
+
+ssize_t conn_writev(struct conn *conn, const struct iovec *iov, size_t nbv) {
+    switch(conn->type) {
+        case CONN_PLAIN:
+            return writev(conn->data.fd, iov, nbv);
+        case CONN_SSL:
+            return SSL_writev(conn->data.ssl, iov, nbv);
     }
     return -1;
 }

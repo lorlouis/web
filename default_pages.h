@@ -64,4 +64,18 @@ const char SERVER_ERROR_PAGE[] = (
 );
 const size_t SERVER_ERROR_PAGE_LEN = sizeof(SERVER_ERROR_PAGE);
 
+const char UPGRADE_REQUIRED_PAGE[] = (
+    "<!DOCTYPE html>"
+        "<html>"
+            "<head>"
+                "<title>426</title>"
+            "</head>"
+            "<body>"
+                "<h1>UPGRADE REQUIRED</h1>"
+                "<p>The resource requested is not available under the current protocol.</p>"
+            "</body>"
+        "</html>"
+);
+const size_t UPGRADE_REQUIRED_PAGE_LEN = sizeof(UPGRADE_REQUIRED_PAGE);
+
 #endif

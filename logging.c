@@ -1,4 +1,6 @@
 #include "logging.h"
+#include <string.h>
+#include <errno.h>
 
 #define XSTR(s) STR(s)
 #define STR(s) #s
@@ -9,6 +11,11 @@ const char *LOG_LEVEL_STR[] = {
     "WARN",
     "ERR",
 };
+
+/* calls strerror on errno and logs it*/
+void logging_errno(enum log_level level, char *prefix) {
+    logging(level, "%s%s", prefix, strerror(errno));
+}
 
 /* log to stderr (includes newline) */
 void logging(enum log_level level, char *fmt, ...) {

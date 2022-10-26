@@ -5,7 +5,6 @@ _OBJS  = headers.o mimes.o logging.o ssl_ex.o conn.o
 HEADER =
 CC = gcc
 FLAGS = -ggdb -c -Wall -fanalyzer
-#FLAGS = -gdwarf -c -Wall
 LFLAGS = -lssl -lcrypto
 BUILD_DIR = build
 MKDIR_P = mkdir -p
