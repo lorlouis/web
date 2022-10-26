@@ -27,6 +27,8 @@ int conn_new_fd(int fd, struct conn *conn);
 
 int conn_new_ssl(SSL *ssl, struct conn *conn);
 
+int conn_ssl_to_conn_fd(struct conn *conn);
+
 /* performs handshake if the connection is ssl
  * Returns
  * 1 on success

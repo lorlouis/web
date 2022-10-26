@@ -18,6 +18,7 @@
 #include "logging.h"
 #include "ssl_ex.h"
 #include "default_pages.h"
+#include "response_header.h"
 
 #include "conn.h"
 
@@ -51,24 +52,15 @@ size_t basedir_len;
  *  the size sent
  *  -1 on fail, check errno */
 size_t send_str(
-        int code,
-        char *msg,
-        const char *mime,
+        struct response_header *response,
         const char *data,
         size_t data_size,
         struct conn *sock) {
     struct iovec page[2] = {0};
-    struct response_header response;
     size_t ret;
 
     page[1].iov_base = (void*)data;
     page[1].iov_len = data_size;
-
-    if(!mime) {
-        response.content_type = "text/html";
-    }
-    response.status_code = code;
-    response.reason = msg;
 
     /* send the header */
     page[0].iov_base = calloc(BUFFSIZE, 1);
@@ -77,7 +69,7 @@ size_t send_str(
         logging(ERR, "unable to alloc new iovec buffer");
         return -1;
     }
-    page[0].iov_len = response_header_write(&response, &page[0]);
+    page[0].iov_len = response_header_write(response, &page[0]);
     if(!page[0].iov_len) {
         free(page[0].iov_base);
         logging(ERR, "unable to write response header into iovec");
@@ -160,7 +152,7 @@ ssize_t send_file(
         struct conn *sock) {
 
     size_t ret;
-    struct response_header response;
+    struct response_header response = {0};
 
     response.status_code = code;
     response.reason = msg;
@@ -201,10 +193,12 @@ ssize_t send_file(
     for(int i = 1; i < nb_vecs; i++) {
         page[i].iov_base = malloc(BUFFSIZE);
         if(!page[i].iov_base) {
+            /* free iovecs up to this point */
             for(int j = 0; j < i; j++) {
                 free(page[j].iov_base);
             }
             free(page);
+            /* no need to jump to failure */
             return -1;
         }
         page[i].iov_len = BUFFSIZE < cur_count ? BUFFSIZE : cur_count;
@@ -220,10 +214,11 @@ ssize_t send_file(
     }
     ret = conn_writev(sock, page, nb_vecs);
     if(ret < 0) {
-        return -1;
+        goto failure;
     }
     ret -= page[0].iov_len;
 
+    /* cleanup */
     for(int i = 0; i < nb_vecs; i++) {
         free(page[i].iov_base);
     }
@@ -259,30 +254,73 @@ ssize_t send_whole_file(
 }
 
 int send_404(struct conn *sock) {
+    struct response_header response = {0};
+    response_header_init(&response, 404, "page not found", 0);
+
     return send_str(
-            404, "page not found", 0,
-            NOT_FOUND_PAGE, NOT_FOUND_PAGE_LEN,
+            &response,
+            NOT_FOUND_PAGE,
+            NOT_FOUND_PAGE_LEN,
             sock);
 }
 
 int send_405(struct conn *sock) {
+    struct response_header response = {0};
+    response_header_init(
+            &response,
+            405,
+            "this server only supports http GET",
+            0);
+
     return send_str(
-            405, "this server only supports http GET", 0,
-            NOT_FOUND_PAGE, NOT_FOUND_PAGE_LEN,
+            &response,
+            NOT_FOUND_PAGE,
+            NOT_FOUND_PAGE_LEN,
             sock);
 }
 
 int send_500(struct conn *sock) {
+    struct response_header response = {0};
+    response_header_init(
+            &response,
+            500,
+            "server error",
+            0);
+
     return send_str(
-            500, "server error", 0,
+            &response,
             SERVER_ERROR_PAGE, SERVER_ERROR_PAGE_LEN,
             sock);
 }
 
-int send_426(struct conn *sock) {
+int send_426(struct conn *sock, const char *protocol) {
+    struct response_header response = {0};
+    response_header_init(
+            &response,
+            426,
+            "upgrade",
+            0);
+    struct key_value kv = {0};
+    kv.key = "Connection";
+    kv.value = "Upgrade";
+
+    kv_vec_add(
+        &response.arbitrary,
+        kv);
+
+    kv.key = "Upgrade";
+    kv.value = (char*)protocol;
+
+    printf("426\n");
+
+    kv_vec_add(
+        &response.arbitrary,
+        kv);
+
     return send_str(
-            426, "server error", 0,
-            SERVER_ERROR_PAGE, SERVER_ERROR_PAGE_LEN,
+            &response,
+            UPGRADE_REQUIRED_PAGE,
+            UPGRADE_REQUIRED_PAGE_LEN,
             sock);
 }
 
@@ -348,15 +386,11 @@ void handle_conn(struct conn sock) {
 
     if(conn_init(&sock) <= 0) {
         if(sock.type == CONN_SSL) {
-            long ret = SSL_get_verify_result(sock.data.ssl);
-            if(ret != 0) {
-                logging(INFO, "SSL_accept err %s",
-                        X509_verify_cert_error_string(ret));
-                goto cleanup;
-            }
-
+            logging(INFO, "SSL_accept err");
+            conn_ssl_to_conn_fd(&sock);
+            send_426(&sock, "HTTP/1.1,TLS/1.2");
+            goto cleanup;
         }
-        goto cleanup;
     }
 
     memcpy(path_buff, basedir, basedir_len);
@@ -368,9 +402,6 @@ void handle_conn(struct conn sock) {
         logging(WARN, "nothing to read on connection %d, closing", sock);
         goto cleanup;
     }
-
-
-    /* TODO handle requests larger than BUFFSIZE */
 
     /* check if the content isn't GET */
     if(strncmp(buff, "GET ", 4)) {
@@ -409,8 +440,16 @@ void handle_conn(struct conn sock) {
     if(file == -1) {
         /* check for the very important teapot */
         if(!strcmp(request.file, "teapot")) {
-            send_str(418, "I'm a tea pot", 0,
-                     I_AM_A_TEAPOT, I_AM_A_TEAPOT_LEN,
+            struct response_header response = {0};
+            response_header_init(
+                    &response,
+                    418,
+                    "I'm a tea pot",
+                    0);
+
+            send_str(&response,
+                     I_AM_A_TEAPOT,
+                     I_AM_A_TEAPOT_LEN,
                      &sock);
         }
         /* return a boring old 404 */

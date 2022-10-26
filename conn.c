@@ -49,6 +49,18 @@ int conn_new_fd(int fd, struct conn *conn) {
     return 0;
 }
 
+int conn_ssl_to_conn_fd(struct conn *conn) {
+    if(conn->type == CONN_SSL) {
+        int fd;
+        conn->type = CONN_PLAIN;
+        fd = SSL_get_fd(conn->data.ssl);
+        SSL_free(conn->data.ssl);
+        conn->data.fd = fd;
+        return fd;
+    }
+    return -1;
+}
+
 int conn_new_ssl(SSL *ssl, struct conn *conn) {
     conn->type = CONN_SSL;
     conn->data.ssl = ssl;

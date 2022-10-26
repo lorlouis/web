@@ -1,25 +1,5 @@
 #include "headers.h"
 
-size_t response_header_write(
-        struct response_header *header,
-        struct iovec *vec) {
-    char *msg = "OK";
-    if(header->reason)
-        msg = header->reason;
-    if(!header->content_type) {
-        header->content_type = "application/octet-stream";
-    }
-    int written = snprintf(
-            vec->iov_base, vec->iov_len,
-            "HTTP/1.1 %3d %s"CRLF"Content-Type: %s"CRLF"%.*s",
-            header->status_code,
-            msg,
-            header->content_type,
-            (int)sizeof(CRLF)-1,
-            CRLF);
-    return written;
-}
-
 int request_header_parse(struct request_header *header, char *buff, size_t buff_size){
     char *line = strtok(buff, " ");
     if(!strcmp(line, "GET"))

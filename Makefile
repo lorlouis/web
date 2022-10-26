@@ -1,7 +1,9 @@
 ENTRYPOINT = main.c
 _ENTRYPOINT_O = main.o
-SOURCE = headers.c mimes.c logging.c ssl_ex.c conn.c
-_OBJS  = headers.o mimes.o logging.o ssl_ex.o conn.o
+SOURCE = headers.c mimes.c logging.c ssl_ex.c conn.c\
+		 response_header.c
+_OBJS  = headers.o mimes.o logging.o ssl_ex.o conn.o\
+		 response_header.o
 HEADER =
 CC = gcc
 FLAGS = -ggdb -c -Wall -fanalyzer

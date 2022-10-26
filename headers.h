@@ -1,7 +1,6 @@
 #ifndef HEADERS_H
 #define HEADERS_H 1
 
-#include <sys/uio.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <stdio.h>
@@ -31,15 +30,10 @@ struct request_header {
     char *user_agent;
 };
 
-struct response_header {
-    int status_code;
-    char *reason;
-    char *content_type;
+struct key_value {
+    char *key;
+    char *value;
 };
-
-size_t response_header_write(
-        struct response_header *header,
-        struct iovec *vec);
 
 /* returns the length written */
 int request_header_parse(struct request_header *header, char *buff, size_t buff_size);
