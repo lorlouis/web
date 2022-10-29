@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
@@ -51,13 +52,13 @@ size_t basedir_len;
  * Returns
  *  the size sent
  *  -1 on fail, check errno */
-size_t send_str(
+ssize_t send_str(
         struct response_header *response,
         const char *data,
         size_t data_size,
         struct conn *sock) {
     struct iovec page[2] = {0};
-    size_t ret;
+    ssize_t ret;
 
     page[1].iov_base = (void*)data;
     page[1].iov_len = data_size;
@@ -69,15 +70,16 @@ size_t send_str(
         logging(ERR, "unable to alloc new iovec buffer");
         return -1;
     }
-    page[0].iov_len = response_header_write(response, &page[0]);
-    if(!page[0].iov_len) {
+    ret = response_header_write(response, &page[0]);
+    page[0].iov_len = ret;
+    if(ret <= 0) {
         free(page[0].iov_base);
         logging(ERR, "unable to write response header into iovec");
         return -1;
     }
 
     /* TODO handle err on write */
-    ret = conn_writev(sock, page, 1);
+    ret = conn_writev(sock, page, 2);
     if(ret <= 0) {
         logging(ERR, "unable to write str response into iovec");
         free(page[0].iov_base);
@@ -293,6 +295,29 @@ int send_500(struct conn *sock) {
             sock);
 }
 
+int send_308(struct conn *sock, char *location) {
+    struct response_header response = {0};
+    response_header_init(
+            &response,
+            308,
+            "upgrade",
+            0);
+    struct key_value kv = {0};
+    kv.key = "Location";
+    kv.value = location;
+
+    kv_vec_push(
+        &response.key_values,
+        kv);
+
+
+    return send_str(
+            &response,
+            "",
+            0,
+            sock);
+}
+
 int send_426(struct conn *sock, const char *protocol) {
     struct response_header response = {0};
     response_header_init(
@@ -304,17 +329,15 @@ int send_426(struct conn *sock, const char *protocol) {
     kv.key = "Connection";
     kv.value = "Upgrade";
 
-    kv_vec_add(
-        &response.arbitrary,
+    kv_vec_push(
+        &response.key_values,
         kv);
 
     kv.key = "Upgrade";
     kv.value = (char*)protocol;
 
-    printf("426\n");
-
-    kv_vec_add(
-        &response.arbitrary,
+    kv_vec_push(
+        &response.key_values,
         kv);
 
     return send_str(
@@ -386,9 +409,13 @@ void handle_conn(struct conn sock) {
 
     if(conn_init(&sock) <= 0) {
         if(sock.type == CONN_SSL) {
-            logging(INFO, "SSL_accept err");
+            logging(INFO, "Invalid SSL or plain text connection");
             conn_ssl_to_conn_fd(&sock);
-            send_426(&sock, "HTTP/1.1,TLS/1.2");
+
+            conn_flush(&sock);
+
+            send_308(&sock, "https://localhost:9092");
+
             goto cleanup;
         }
     }
@@ -406,7 +433,7 @@ void handle_conn(struct conn sock) {
     /* check if the content isn't GET */
     if(strncmp(buff, "GET ", 4)) {
         /* unsuported protocol */
-        puts(buff);
+        printf("buff: %s", buff);
         send_405(&sock);
         logging(DEBUG, "buff lenght: %ld", buff_len);
         goto cleanup;
@@ -596,7 +623,7 @@ int main(int argc, const char **argv) {
         SSL_set_fd(ssl, new_fd);
         struct conn conn = {0};
         conn_new_ssl(ssl, &conn);
-
+        //conn_new_fd(new_fd, &conn);
         /* TODO(louis) multi thread */
         handle_conn(conn);
     }

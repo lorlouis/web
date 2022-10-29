@@ -1,6 +1,7 @@
 #include "ssl_ex.h"
 #include "conn.h"
 #include <unistd.h>
+#include <fcntl.h>
 
 void conn_cleanup(struct conn *conn) {
     switch(conn->type) {
@@ -74,5 +75,40 @@ int conn_init(struct conn *conn) {
         case CONN_SSL:
             return SSL_accept(conn->data.ssl);
     }
+    return 0;
+}
+
+/* flushed the socket's buffer
+ * Returns 0 on success and an err code otherwise */
+int conn_flush(struct conn *conn) {
+    char buf[20];
+    int flags;
+    int fd = -1;
+    int ret;
+
+    switch(conn->type) {
+        case CONN_PLAIN:
+            fd = conn->data.fd;
+        break;
+        case CONN_SSL:
+            fd = SSL_get_fd(conn->data.ssl);
+        break;
+    }
+    if(fd < 0) return EINVAL;
+    /* set non-blocking */
+    flags = fcntl(fd, F_GETFL, 0);
+    flags |= O_NONBLOCK;
+    fcntl(fd, F_SETFL, flags);
+    do {
+        ret = conn_read(conn, buf, 20);
+    }
+    while(ret > 0);
+    if(ret == -1) {
+        return errno;
+    }
+    /* set to blocking again */
+    flags &= ~O_NONBLOCK;
+    fcntl(fd, F_SETFL, flags);
+
     return 0;
 }

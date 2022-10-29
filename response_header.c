@@ -1,4 +1,8 @@
+#include <unistd.h>
+
 #include "response_header.h"
+
+VEC_FUNCTIONS(kv_vec, struct key_value);
 
 void response_header_init(
         struct response_header *response,
@@ -15,9 +19,14 @@ void response_header_init(
     if(!mime) {
         response->content_type = "text/html";
     }
+    kv_vec_init(&response->key_values, 0, 0);
 }
 
-size_t response_header_write(
+void response_header_cleanup(struct response_header *header) {
+    kv_vec_cleanup(&header->key_values);
+}
+
+ssize_t response_header_write(
         struct response_header *header,
         struct iovec *vec) {
     char *msg = "OK";
@@ -41,12 +50,8 @@ size_t response_header_write(
     if(written >= vec->iov_len) return -1;
 
     /* write headers */
-    for(int i = 0; i < header->arbitrary.len; i++) {
-        printf("len: %ld\n", header->arbitrary.len);
-        printf("cap: %ld\n", header->arbitrary.capacity);
-        struct key_value *kv = kv_vec_getref(
-                &header->arbitrary,
-                i);
+    for(int i = 0; i < header->key_values.len; i++) {
+        struct key_value *kv = header->key_values.data + i;
         ret = snprintf(
                 vec->iov_base + written,
                 vec->iov_len - written,

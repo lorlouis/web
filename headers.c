@@ -1,5 +1,15 @@
 #include "headers.h"
 
+void key_value_cleanup(struct key_value *kv) {
+    if(kv->flags & KEY_VALUE_FREE_KEY) {
+        free(kv->key);
+    }
+
+    if(kv->flags & KEY_VALUE_FREE_VALUE) {
+        free(kv->value);
+    }
+}
+
 int request_header_parse(struct request_header *header, char *buff, size_t buff_size){
     char *line = strtok(buff, " ");
     if(!strcmp(line, "GET"))

@@ -30,9 +30,13 @@ struct request_header {
     char *user_agent;
 };
 
+#define KEY_VALUE_FREE_KEY 1
+#define KEY_VALUE_FREE_VALUE 2
+
 struct key_value {
     char *key;
     char *value;
+    unsigned char flags;
 };
 
 /* returns the length written */

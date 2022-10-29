@@ -1,0 +1,3 @@
+[submodule "vec"]
+	path = vec
+	url = https://github.com/lorlouis/Vec

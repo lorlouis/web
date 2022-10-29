@@ -37,5 +37,8 @@ int conn_init(struct conn *conn);
 
 ssize_t conn_writev(struct conn *conn, const struct iovec *iov, size_t nbv);
 
-#endif
+/* flushed the socket's buffer
+ * Returns 0 on success and an err code otherwise */
+int conn_flush(struct conn *conn);
 
+#endif
