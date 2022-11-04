@@ -13,13 +13,13 @@
 #include <signal.h>
 #include <assert.h>
 #include <stdbool.h>
-
 #include "headers.h"
-#include "mimes.h"
 #include "logging.h"
 #include "ssl_ex.h"
 #include "default_pages.h"
 #include "response_header.h"
+
+#include <magic.h>
 
 #include "conn.h"
 
@@ -30,6 +30,16 @@
 static volatile bool KEEP_RUNNING = true;
 
 #define MIN(a,b) (a < b ? a : b)
+
+magic_t magic;
+
+int mime_init(void) {
+    magic = magic_open(MAGIC_MIME_TYPE);
+    magic_load(magic, 0);
+    // on arch the db is already compiled
+    //magic_compile(magic, 0);
+    return 0;
+}
 
 void sigint_halder(int sig) {
     if(sig == SIGINT) {
@@ -42,8 +52,6 @@ void sigint_halder(int sig) {
     signal(sig, sigint_halder);
 }
 
-/* hashmap containing the mimes (initialized in main) */
-struct hmap mimes_hmap = {0};
 /* the base directory of the server (supplied by argv[2] */
 const char *basedir;
 size_t basedir_len;
@@ -148,7 +156,7 @@ failure:
 ssize_t send_file(
         int code,
         char *msg,
-        char *mime,
+        const char *mime,
         int fd,
         size_t count,
         struct conn *sock) {
@@ -242,7 +250,7 @@ failure:
  *  -1 on fail, check errno */
 ssize_t send_whole_file(
         int code, char *msg,
-        char *mime,
+        const char *mime,
         int fd,
         struct conn *sock) {
     /* send a file */
@@ -400,8 +408,7 @@ void handle_conn(struct conn sock) {
 
     size_t file_len = 0;
 
-    char *extension = 0;
-    char *type = 0;
+    const char *type = 0;
 
     const char html_begin[] = "<!DOCTYPE html>";
     const size_t html_begin_size = sizeof(html_begin);
@@ -455,11 +462,6 @@ void handle_conn(struct conn sock) {
     path_buff[basedir_len + 1 + file_len] = '\0';
     printf("path buff: %s\n", path_buff);
 
-    /* extract MIME information */
-    strtok(request.file, ".");
-    extension = strtok(0, "/");
-    type = 0;
-
     /* open the file */
     file = open(path_buff, O_RDONLY);
 
@@ -487,9 +489,9 @@ void handle_conn(struct conn sock) {
     }
     /* ##### At this point a file is found ##### */
     /* check for the mimetype in the hashmap */
-    if(extension) {
-        type = hmap_get(&mimes_hmap, extension);
-    }
+
+    /* set MIME info */
+    type = magic_file(magic, path_buff);
     if(!type) {
         type = "application/octet-stream";
         /* support for untagged html pages */
@@ -589,7 +591,7 @@ int main(int argc, const char **argv) {
 
     logging(INFO, "Building MIME type hashmap");
     /* initialise the mime hashmap */
-    build_mimes_hmap(&mimes_hmap);
+    mime_init();
 
     logging(INFO,"starting server on 0.0.0.0:%d", port_no);
     /* setup socket for listen */
@@ -631,5 +633,6 @@ cleanup:
     /* close the socket */
     close(serv_fd);
     SSL_CTX_free(ctx);
+    magic_close(magic);
     return 0;
 }

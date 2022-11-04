@@ -1,13 +1,13 @@
 ENTRYPOINT = main.c
 _ENTRYPOINT_O = main.o
-SOURCE = headers.c mimes.c logging.c ssl_ex.c conn.c\
+SOURCE = headers.c logging.c ssl_ex.c conn.c\
 		 response_header.c
-_OBJS  = headers.o mimes.o logging.o ssl_ex.o conn.o\
+_OBJS  = headers.o logging.o ssl_ex.o conn.o\
 		 response_header.o
 HEADER =
 CC = gcc
 FLAGS = -ggdb -c -Wall -fanalyzer
-LFLAGS = -lssl -lcrypto
+LFLAGS = -lssl -lcrypto -lmagic
 BUILD_DIR = build
 MKDIR_P = mkdir -p
 

@@ -12,7 +12,7 @@ VEC_PROTYPE(kv_vec, struct key_value);
 struct response_header {
     int status_code;
     char *reason;
-    char *content_type;
+    const char *content_type;
     struct kv_vec key_values;
 };
 
