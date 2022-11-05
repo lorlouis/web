@@ -1,51 +1,24 @@
-ENTRYPOINT = main.c
-_ENTRYPOINT_O = main.o
-SOURCE = headers.c logging.c ssl_ex.c conn.c\
+SOURCE = main.c headers.c logging.c ssl_ex.c conn.c\
 		 response_header.c
-_OBJS  = headers.o logging.o ssl_ex.o conn.o\
-		 response_header.o
-HEADER =
-CC = gcc
-FLAGS = -ggdb -c -Wall -fanalyzer
-LFLAGS = -lssl -lcrypto -lmagic
+HEADER	=
+SRC_DIR = src
 BUILD_DIR = build
-MKDIR_P = mkdir -p
+OUT	= sv
+CC	= gcc
+FLAGS = -c -Wall -fanalyzer
+LFLAGS = -lssl -lcrypto -lmagic
 
+OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(SOURCE))
 
-_TESTS_ENTRYPOINT_O = tests.o
-TESTS_SOURCE = tests.c
-_TESTS_OBJS =
-TESTS_OUT = test
+all: $(OBJS)
+	$(CC) -o $(OUT) $^ $(LFLAGS)
 
-OUT = sv
+$(BUILD_DIR):
+	mkdir $(BUILD_DIR)
 
-ENTRYPOINT_O = $(patsubst %,$(BUILD_DIR)/%,$(_ENTRYPOINT_O))
-
-OBJS = $(patsubst %,$(BUILD_DIR)/%,$(_OBJS))
-
-TESTS_ENTRYPOINT_O = $(patsubst %,$(BUILD_DIR)/%,$(_TESTS_ENTRYPOINT_O))
-
-TESTS_OBJS = $(patsubst %,$(BUILD_DIR)/%,$(_TESTS_OBJS))
-
-debug: $(ENTRYPOINT_O) $(OBJS)
-	$(CC) -g $(ENTRYPOINT_O) $(OBJS) -o $(OUT) $(LFLAGS)
-
-
-tests: $(TESTS_OUT)
-	./$(TESTS_OUT)
-
-$(TESTS_OUT): $(TESTS_ENTRYPOINT_O) $(TESTS_OBJS) $(OBJS)
-	$(CC) -g $(TESTS_ENTRYPOINT_O) $(TESTS_OBJS) $(OBJS) -o $(TESTS_OUT) $(LFLAGS)
-
-rel: $(ENTRYPOINT_O) $(OBJS)
-	$(CC) -O2 $(OBJS) -o $(OUT) $(LFLAGS)
-
-$(BUILD_DIR)/%.o: %.c
-	$(MKDIR_P) $(BUILD_DIR)
-	$(CC) $(FLAGS) $< -o $@
-
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(BUILD_DIR)
+	$(CC) $(FLAGS) -c -o $@ $<
 
 clean:
-	rm -rf $(BUILD_DIR)
-	rm -f $(OUT)
-	rm -f $(TESTS_OUT)
+	rm -f $(OBJS) $(OUT)
+	rmdir $(BUILD_DIR)

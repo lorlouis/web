@@ -4,7 +4,7 @@
 #include <sys/uio.h>
 
 #include "headers.h"
-#include "vec/vec.h"
+#include "lib/vec/vec.h"
 
 VEC(kv_vec, struct key_value);
 VEC_PROTYPE(kv_vec, struct key_value);
