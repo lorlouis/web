@@ -1,8 +1,16 @@
 #ifndef CONN_H
 #define CONN_H 1
 
-#include "ssl_ex.h"
-#include <unistd.h>
+#include <sys/uio.h>
+#include <openssl/ssl.h>
+
+/* like writev but on an ssl rather than a raw fd */
+ssize_t SSL_writev(SSL *ssl, const struct iovec *iov, int iovcnt);
+
+/* Closes the SSL connection
+ * and closes `ssl`'s fd
+ * frees `ssl` */
+void SSL_cleanup(SSL *ssl);
 
 enum conn_type {
     CONN_PLAIN,

@@ -1,4 +1,4 @@
-SOURCE = main.c headers.c logging.c ssl_ex.c conn.c\
+SOURCE = main.c headers.c logging.c conn.c\
 		 response_header.c
 HEADER	=
 SRC_DIR = src
