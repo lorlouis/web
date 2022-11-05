@@ -21,4 +21,3 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(BUILD_DIR)
 
 clean:
 	rm -f $(OBJS) $(OUT)
-	rmdir $(BUILD_DIR)
