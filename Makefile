@@ -21,3 +21,6 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(BUILD_DIR)
 
 clean:
 	rm -f $(OBJS) $(OUT)
+
+git_init:
+	git submodule update --init --recursive

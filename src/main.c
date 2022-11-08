@@ -15,10 +15,10 @@
 #include <stdbool.h>
 #include "headers.h"
 #include "logging.h"
-#include "ssl_ex.h"
 #include "default_pages.h"
 #include "response_header.h"
 
+#include <openssl/err.h>
 #include <magic.h>
 
 #include "conn.h"
