@@ -589,7 +589,7 @@ int main(int argc, const char **argv) {
         return -1;
     }
 
-    logging(INFO, "Building MIME type hashmap");
+    logging(INFO, "Initiating MIME DB");
     /* initialise the mime hashmap */
     mime_init();
 
