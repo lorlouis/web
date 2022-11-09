@@ -65,6 +65,7 @@ static int key_value_split(char *line, char **key, char **value) {
     line++;
     /* find = */
     while(*line && *line != '=') line++;
+    line++;
     /* no assignment */
     if(!*line) return KV_NoAssignment;
     /* skip white spaces */
@@ -80,21 +81,18 @@ static int key_value_split(char *line, char **key, char **value) {
         if(!*line) return Kv_UnclosedQuote;
         /* no value */
         if(*value >= line-1) return KV_NoValue;
-        value_end = line-1;
+        value_end = line;
     }
     else {
         *value = line;
         line++;
         while(*line && !isspace(*line)) line++;
-        /* end of the line no need to check further */
-        if(!*line) return 0;
         value_end = line;
     }
-
+    line++;
     /* check for unexpected values */
     while(*line && isspace(*line)) line++;
     /* unexpected value */
-    fprintf(stderr, "%c\n", *line);
     if(*line) return KV_UnexpectedToken;
     *key_end = '\0';
     *value_end = '\0';
@@ -104,6 +102,7 @@ static int key_value_split(char *line, char **key, char **value) {
 /* loads a config from `f`
  * Returns: < 0 on error, 0 otherwise */
 int load_config(FILE *f) {
+    int ret_val = 0;
     int line_num = 0;
     char *line = 0;
     ssize_t line_len = 0;
@@ -160,11 +159,46 @@ int load_config(FILE *f) {
         size_t key_len = strlen(key);
         if(key_len == sizeof("bind_addr")
                 && !strncmp("bind_addr", key, key_len)) {
-            printf("bind addr");
+            char *end=0;
+            int port = strtol(value, &end, 10);
+            if(*end != '\0') {
+                fprintf(stderr,
+                        "unable to parse `%s` must be a number between 1 and 65535 inclusively\n",
+                        value);
+                return -1;
+            }
+        }
+        else if(key_len == sizeof("http_port")
+                && !strncmp("http_port", key, key_len)) {
+            char *end=0;
+            int port = strtol(value, &end, 10);
+            if(*end != '\0' || port < 1 || port > 65535) {
+                fprintf(stderr,
+                        "unable to parse `%s` must be a number between 1 and 65535 inclusively\n",
+                        value);
+                return -1;
+            }
+            else {
+                CONFIG.http_port = port;
+            }
+        }
+        else if(key_len == sizeof("https_port")
+                && !strncmp("https_port", key, key_len)) {
+            char *end=0;
+            int port = strtol(value, &end, 10);
+            if(*end != '\0' || port < 1 || port > 65535) {
+                fprintf(stderr,
+                        "unable to parse `%s` must be a number between 1 and 65535 inclusively\n",
+                        value);
+                return -1;
+            }
+            else {
+                CONFIG.http_port = port;
+            }
         }
 
     }
 cleanup:
     free(line);
-    return line_len;
+    return ret_val;
 }

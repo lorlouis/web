@@ -4,15 +4,14 @@
 #include "../src/config.c"
 
 void test_ky_split(void) {
-    char line[] = "hello = world";
+    char line[] = "hello =  \"world !\"";
     char *key;
     char *value;
     int ret = key_value_split(line, &key, &value);
-    fprintf(stderr, "%s\n", key);
-    fprintf(stderr, "%d\n", ret);
+    fprintf(stderr, "%s\n", value);
     assert(ret == 0);
     assert(!strcmp(key, "hello"));
-    assert(!strcmp(value, "\"world !\""));
+    assert(!strcmp(value, "world !"));
 cleanup:;
 }
 
