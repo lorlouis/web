@@ -84,6 +84,7 @@ static int key_value_split(char *line, char **key, char **value) {
     }
     else {
         *value = line;
+        line++;
         while(*line && !isspace(*line)) line++;
         /* end of the line no need to check further */
         if(!*line) return 0;
@@ -93,6 +94,7 @@ static int key_value_split(char *line, char **key, char **value) {
     /* check for unexpected values */
     while(*line && isspace(*line)) line++;
     /* unexpected value */
+    fprintf(stderr, "%c\n", *line);
     if(*line) return KV_UnexpectedToken;
     *key_end = '\0';
     *value_end = '\0';
