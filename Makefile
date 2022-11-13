@@ -1,7 +1,7 @@
 ENTRYPOINT = main.c
 TEST_ENTRYPOINT = main.c
 SOURCE = headers.c logging.c conn.c\
-		 response_header.c
+		 response_header.c config.c
 HEADER	=
 SRC_DIR = src
 TEST_DIR = tests

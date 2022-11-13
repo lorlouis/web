@@ -22,6 +22,7 @@
 #include <magic.h>
 
 #include "conn.h"
+#include "config.h"
 
 #define BUFFSIZE 4096
 #define MAX_BUFF_COUNT_FAST 128
@@ -52,9 +53,6 @@ void sigint_halder(int sig) {
     signal(sig, sigint_halder);
 }
 
-/* the base directory of the server (supplied by argv[2] */
-const char *basedir;
-size_t basedir_len;
 
 /* Tries to send data_size from data into sock
  * Returns
@@ -427,8 +425,8 @@ void handle_conn(struct conn sock) {
         }
     }
 
-    memcpy(path_buff, basedir, basedir_len);
-    path_buff[basedir_len] = '/';
+    memcpy(path_buff, CONFIG.base_dir, CONFIG.base_dir_len);
+    path_buff[CONFIG.base_dir_len] = '/';
 
     /* nothing to read */
     if((buff_len = conn_read(&sock, buff, BUFFSIZE)) < 0) {
@@ -458,8 +456,8 @@ void handle_conn(struct conn sock) {
         file_len = 10;
     }
 
-    memcpy(path_buff + basedir_len + 1, request.file, file_len);
-    path_buff[basedir_len + 1 + file_len] = '\0';
+    memcpy(path_buff + CONFIG.base_dir_len + 1, request.file, file_len);
+    path_buff[CONFIG.base_dir_len + 1 + file_len] = '\0';
     printf("path buff: %s\n", path_buff);
 
     /* open the file */
@@ -488,10 +486,17 @@ void handle_conn(struct conn sock) {
         goto cleanup;
     }
     /* ##### At this point a file is found ##### */
-    /* check for the mimetype in the hashmap */
+    int path_len = strlen(path_buff);
+    /* by default the linux mimetype database does not include css for some
+     * reason */
+    if(path_len + 4 < BUFFSIZE && !strncmp(path_buff+path_len-4, ".css", 4)) {
+        type = "text/css";
+    }
 
     /* set MIME info */
-    type = magic_file(magic, path_buff);
+    if(!type) {
+        type = magic_file(magic, path_buff);
+    }
     if(!type) {
         type = "application/octet-stream";
         /* support for untagged html pages */
@@ -552,7 +557,6 @@ void load_certificates(SSL_CTX *ctx, char *cert_file, char *key_file) {
 }
 
 int main(int argc, const char **argv) {
-    int port_no;
     struct sockaddr_in serv_addr;
     int serv_fd;
 
@@ -562,41 +566,36 @@ int main(int argc, const char **argv) {
     signal(SIGPIPE, sigint_halder);
 #endif
 
+    if(argc == 1) {
+        fprintf(stderr, "Usage: %s <config path>\n", argv[0]);
+        return -1;
+    }
+    FILE *config_file = fopen(argv[1], "r");
+
+    if(config_file <= 0) {
+        perror("");
+        return -1;
+    }
+    if(load_config(config_file)) {
+        fprintf(stderr, "err loading config\n");
+        return -1;
+    }
+
     /* initialise openssl  */
     SSL_library_init();
 
     /* configure ssl */
     SSL_CTX *ctx = ctx_init();
-    load_certificates(ctx, "cert0.pem", "cert0.pem");
-
-    /* check parameters */
-    if(argc == 3){
-        errno = 0;
-        int tmp = (int)strtoul(argv[1], NULL, 10);
-        if(errno == EINVAL || !(tmp > 0 && tmp <= 65535)) {
-            fprintf(stderr,
-                    "port(%s) must be an integer between 1 and 65535\n",
-                    argv[1]);
-            return -1;
-        };
-        basedir = argv[2];
-        basedir_len = strlen(basedir);
-        port_no = tmp;
-    }
-    else {
-        fprintf(stderr, "Usage: sv <port> <base dir>\nport needs"
-                        " to be between 1 and 65535 inclusively\n");
-        return -1;
-    }
+    load_certificates(ctx, CONFIG.pem_file, CONFIG.pem_file);
 
     logging(INFO, "Initiating MIME DB");
     /* initialise the mime hashmap */
     mime_init();
 
-    logging(INFO,"starting server on 0.0.0.0:%d", port_no);
+    logging(INFO,"starting server on 0.0.0.0:%d", CONFIG.https_port);
     /* setup socket for listen */
-    if(serv_setup(port_no, &serv_fd, &serv_addr)) {
-        perror("");
+    if(serv_setup(CONFIG.https_port, &serv_fd, &serv_addr)) {
+        perror("err setup");
         return -1;
     }
 
@@ -634,5 +633,6 @@ cleanup:
     close(serv_fd);
     SSL_CTX_free(ctx);
     magic_close(magic);
+    cleanup_config();
     return 0;
 }

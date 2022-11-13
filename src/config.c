@@ -1,20 +1,18 @@
-#include <stdio.h>
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
 
+#include "config.h"
+
 #define MIN(a,b) (a < b ? a : b)
 
-struct {
-    char *bind_addr;
-    int http_port;
-    int https_port;
-    char *pem_file;
-} CONFIG = {
+struct config CONFIG = {
     .bind_addr = "0.0.0.0",
     .http_port = 80,
     .https_port = 443,
     .pem_file = "cert.pem",
+    .base_dir = ".",
+    .base_dir_len = 2,
 };
 
 /* saves the config in memory to `f`
@@ -31,15 +29,6 @@ int save_config(FILE *f) {
     if(ret < 0) return ret;
     return 0;
 }
-
-enum KV_SPLIT_ERR {
-    KV_NoKey = -1,
-    KV_NoValue = -2,
-    KV_NoAssignment = -3,
-    Kv_UnclosedQuote = -4,
-    KV_UnexpectedToken = -5,
-    KV_Comment = -99,
-};
 
 /* Extracts the key and the value out of a line formatted like
  * <key> = <value>\0 -> <key>\0= <value>\0
@@ -80,7 +69,7 @@ static int key_value_split(char *line, char **key, char **value) {
         /* unclosed quote */
         if(!*line) return Kv_UnclosedQuote;
         /* no value */
-        if(*value >= line-1) return KV_NoValue;
+        if(*value >= line) return KV_NoValue;
         value_end = line;
     }
     else {
@@ -106,16 +95,19 @@ int load_config(FILE *f) {
     int line_num = 0;
     char *line = 0;
     ssize_t line_len = 0;
-    size_t line_size = 0;
+    size_t line_size = 20;
 
     int split_ret;
 
     char *key;
     char *value;
 
-    while((line_len = getline(&line, &line_size, f))) {
+
+    while((line_len = getline(&line, &line_size, f)) != -1) {
         line_num++;
-        if(line_len < 0) goto cleanup;
+        if(line_len < 0) {
+            goto cleanup;
+        }
         /* empty line */
         if(line_len <= 1) continue;
 
@@ -126,47 +118,42 @@ int load_config(FILE *f) {
                         "line %d: `%s` no key found\n",
                         line_num,
                         line);
-                break;
+                goto cleanup;
             case KV_NoValue:
                 fprintf(stderr,
                         "line %d: `%s` no value found\n",
                         line_num,
                         line);
-                break;
+                goto cleanup;
             case KV_NoAssignment:
                 fprintf(stderr,
                         "line %d: `%s` no assignment found\n",
                         line_num,
                         line);
-                break;
+                goto cleanup;
             case Kv_UnclosedQuote:
                 fprintf(stderr,
                         "line %d: `%s` unclosed quote\n",
                         line_num,
                         line);
-                break;
+                goto cleanup;
             case KV_UnexpectedToken:
                 fprintf(
                     stderr,
                     "line %d: `%s` unexpected token after value\n",
                     line_num,
                     line);
-                break;
+                goto cleanup;
             case KV_Comment:
                 continue;
         }
         /* must be a line with a key and a value */
-        size_t key_len = strlen(key);
+        size_t key_len = strlen(key) + 1;
         if(key_len == sizeof("bind_addr")
                 && !strncmp("bind_addr", key, key_len)) {
-            char *end=0;
-            int port = strtol(value, &end, 10);
-            if(*end != '\0') {
-                fprintf(stderr,
-                        "unable to parse `%s` must be a number between 1 and 65535 inclusively\n",
-                        value);
-                return -1;
-            }
+            int value_len = strlen(value);
+            CONFIG.bind_addr = malloc(value_len);
+            strncpy(CONFIG.bind_addr, value, value_len);
         }
         else if(key_len == sizeof("http_port")
                 && !strncmp("http_port", key, key_len)) {
@@ -176,7 +163,7 @@ int load_config(FILE *f) {
                 fprintf(stderr,
                         "unable to parse `%s` must be a number between 1 and 65535 inclusively\n",
                         value);
-                return -1;
+                goto cleanup;
             }
             else {
                 CONFIG.http_port = port;
@@ -190,15 +177,36 @@ int load_config(FILE *f) {
                 fprintf(stderr,
                         "unable to parse `%s` must be a number between 1 and 65535 inclusively\n",
                         value);
-                return -1;
+                ret_val = -1;
+                goto cleanup;
             }
             else {
-                CONFIG.http_port = port;
+                CONFIG.https_port = port;
             }
         }
-
+        else if(key_len == sizeof("pem_file")
+                && !strncmp("pem_file", key, key_len)) {
+            int value_len = strlen(value);
+            CONFIG.pem_file = malloc(value_len);
+            strncpy(CONFIG.pem_file, value, value_len);
+        }
+        else if(key_len == sizeof("base_dir")
+                && !strncmp("base_dir", key, key_len)) {
+            int value_len = strlen(value);
+            CONFIG.base_dir = malloc(value_len);
+            CONFIG.base_dir_len = value_len;
+            strncpy(CONFIG.base_dir, value, value_len);
+        }
+        else {
+            fprintf(stderr, "unknown key: `%s`\n", key);
+        }
     }
 cleanup:
     free(line);
     return ret_val;
+}
+
+void cleanup_config() {
+    free(CONFIG.pem_file);
+    free(CONFIG.bind_addr);
 }
