@@ -1,43 +1,29 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
+#include <errno.h>
 
 #include "config.h"
 
 #define MIN(a,b) (a < b ? a : b)
 
 struct config CONFIG = {
-    .bind_addr = "0.0.0.0",
-    .http_port = 80,
-    .https_port = 443,
-    .pem_file = "cert.pem",
-    .base_dir = ".",
-    .base_dir_len = 2,
+    .bind_addr = 0,
+    .http_port = -1,
+    .https_port = -1,
+    .pem_file = 0,
+    .base_dir = 0,
+    .base_dir_len = -1,
 };
-
-/* saves the config in memory to `f`
- * Returns: < 0 on error, 0 otherwise*/
-int save_config(FILE *f) {
-    int ret;
-    ret = fprintf(f, "bind_addr = \"%s\"\n", CONFIG.bind_addr);
-    if(ret < 0) return ret;
-    ret = fprintf(f, "http_port = %d\n", CONFIG.http_port);
-    if(ret < 0) return ret;
-    ret = fprintf(f, "https_port = %d\n", CONFIG.https_port);
-    if(ret < 0) return ret;
-    ret = fprintf(f, "pem_file = \"%s\"\n", CONFIG.pem_file);
-    if(ret < 0) return ret;
-    return 0;
-}
 
 /* Extracts the key and the value out of a line formatted like
  * <key> = <value>\0 -> <key>\0= <value>\0
  * Returns: < 0 on err, 0 otherwise */
 static int key_value_split(char *line, char **key, char **value) {
+    // TODO(louis) rewrite this function, too much repetition
     char *key_end;
     char *value_end;
 
-    int is_quoted = 0;
     /* skip white spaces */
     while(*line && isspace(*line)) line++;
     /* no key */
@@ -88,10 +74,22 @@ static int key_value_split(char *line, char **key, char **value) {
     return 0;
 }
 
+#define CONFIG_STR_BUFFER_SIZE 128
+
+static char *CONFIG_ERR_STR = 0;
+
+static char CONFIG_STR_BUFFER[CONFIG_STR_BUFFER_SIZE] = {0};
+
+const char *get_config_err(void) {
+    char *err = CONFIG_ERR_STR;
+    CONFIG_ERR_STR = 0;
+    return err;
+}
+
 /* loads a config from `f`
  * Returns: < 0 on error, 0 otherwise */
 int load_config(FILE *f) {
-    int ret_val = 0;
+    int ret_val = -1;
     int line_num = 0;
     char *line = 0;
     ssize_t line_len = 0;
@@ -114,35 +112,44 @@ int load_config(FILE *f) {
         split_ret = key_value_split(line, &key, &value);
         switch(split_ret) {
             case KV_NoKey:
-                fprintf(stderr,
-                        "line %d: `%s` no key found\n",
+                snprintf(CONFIG_STR_BUFFER,
+                        CONFIG_STR_BUFFER_SIZE,
+                        "line %d: `%s` no key found",
                         line_num,
                         line);
+                CONFIG_ERR_STR = CONFIG_STR_BUFFER;
                 goto cleanup;
             case KV_NoValue:
-                fprintf(stderr,
-                        "line %d: `%s` no value found\n",
+                snprintf(CONFIG_STR_BUFFER,
+                        CONFIG_STR_BUFFER_SIZE,
+                        "line %d: `%s` no value found",
                         line_num,
                         line);
+                CONFIG_ERR_STR = CONFIG_STR_BUFFER;
                 goto cleanup;
             case KV_NoAssignment:
-                fprintf(stderr,
-                        "line %d: `%s` no assignment found\n",
+                snprintf(CONFIG_STR_BUFFER,
+                        CONFIG_STR_BUFFER_SIZE,
+                        "line %d: `%s` no assignment found",
                         line_num,
                         line);
+                CONFIG_ERR_STR = CONFIG_STR_BUFFER;
                 goto cleanup;
             case Kv_UnclosedQuote:
-                fprintf(stderr,
-                        "line %d: `%s` unclosed quote\n",
+                snprintf(CONFIG_STR_BUFFER,
+                        CONFIG_STR_BUFFER_SIZE,
+                        "line %d: `%s` unclosed quote",
                         line_num,
                         line);
+                CONFIG_ERR_STR = CONFIG_STR_BUFFER;
                 goto cleanup;
             case KV_UnexpectedToken:
-                fprintf(
-                    stderr,
-                    "line %d: `%s` unexpected token after value\n",
-                    line_num,
-                    line);
+                snprintf(CONFIG_STR_BUFFER,
+                        CONFIG_STR_BUFFER_SIZE,
+                        "line %d: `%s` unexpected token after value",
+                        line_num,
+                        line);
+                CONFIG_ERR_STR = CONFIG_STR_BUFFER;
                 goto cleanup;
             case KV_Comment:
                 continue;
@@ -151,18 +158,40 @@ int load_config(FILE *f) {
         size_t key_len = strlen(key) + 1;
         if(key_len == sizeof("bind_addr")
                 && !strncmp("bind_addr", key, key_len)) {
+
+            if(CONFIG.bind_addr) {
+                snprintf(CONFIG_STR_BUFFER,
+                        CONFIG_STR_BUFFER_SIZE,
+                        "line %d: duplicate key `bind_addr` defined previously",
+                        line_num);
+                CONFIG_ERR_STR = CONFIG_STR_BUFFER;
+                goto cleanup;
+            }
+
             int value_len = strlen(value);
             CONFIG.bind_addr = malloc(value_len);
             strncpy(CONFIG.bind_addr, value, value_len);
         }
         else if(key_len == sizeof("http_port")
                 && !strncmp("http_port", key, key_len)) {
+
+            if(CONFIG.http_port != -1) {
+                snprintf(CONFIG_STR_BUFFER,
+                        CONFIG_STR_BUFFER_SIZE,
+                        "line %d: duplicate key `http_port` defined previously",
+                        line_num);
+                CONFIG_ERR_STR = CONFIG_STR_BUFFER;
+                goto cleanup;
+            }
+
             char *end=0;
             int port = strtol(value, &end, 10);
             if(*end != '\0' || port < 1 || port > 65535) {
-                fprintf(stderr,
-                        "unable to parse `%s` must be a number between 1 and 65535 inclusively\n",
+                snprintf(CONFIG_STR_BUFFER,
+                        CONFIG_STR_BUFFER_SIZE,
+                        "unable to parse `%s` must be a number between 1 and 65535 inclusively",
                         value);
+                CONFIG_ERR_STR = CONFIG_STR_BUFFER;
                 goto cleanup;
             }
             else {
@@ -171,13 +200,24 @@ int load_config(FILE *f) {
         }
         else if(key_len == sizeof("https_port")
                 && !strncmp("https_port", key, key_len)) {
+
+            if(CONFIG.https_port != -1) {
+                snprintf(CONFIG_STR_BUFFER,
+                        CONFIG_STR_BUFFER_SIZE,
+                        "line %d: duplicate key `https_port` defined previously",
+                        line_num);
+                CONFIG_ERR_STR = CONFIG_STR_BUFFER;
+                goto cleanup;
+            }
+
             char *end=0;
             int port = strtol(value, &end, 10);
             if(*end != '\0' || port < 1 || port > 65535) {
-                fprintf(stderr,
-                        "unable to parse `%s` must be a number between 1 and 65535 inclusively\n",
+                snprintf(CONFIG_STR_BUFFER,
+                        CONFIG_STR_BUFFER_SIZE,
+                        "unable to parse `%s` must be a number between 1 and 65535 inclusively",
                         value);
-                ret_val = -1;
+                CONFIG_ERR_STR = CONFIG_STR_BUFFER;
                 goto cleanup;
             }
             else {
@@ -186,21 +226,56 @@ int load_config(FILE *f) {
         }
         else if(key_len == sizeof("pem_file")
                 && !strncmp("pem_file", key, key_len)) {
+
+            if(CONFIG.pem_file) {
+                snprintf(CONFIG_STR_BUFFER,
+                        CONFIG_STR_BUFFER_SIZE,
+                        "line %d: duplicate key `pem_file` defined previously",
+                        line_num);
+                CONFIG_ERR_STR = CONFIG_STR_BUFFER;
+                goto cleanup;
+            }
+
             int value_len = strlen(value);
             CONFIG.pem_file = malloc(value_len);
             strncpy(CONFIG.pem_file, value, value_len);
         }
         else if(key_len == sizeof("base_dir")
                 && !strncmp("base_dir", key, key_len)) {
+
+            if(CONFIG.base_dir) {
+                snprintf(CONFIG_STR_BUFFER,
+                        CONFIG_STR_BUFFER_SIZE,
+                        "line %d: duplicate key `base_dir` defined previously",
+                        line_num);
+                CONFIG_ERR_STR = CONFIG_STR_BUFFER;
+                goto cleanup;
+            }
+
             int value_len = strlen(value);
             CONFIG.base_dir = malloc(value_len);
             CONFIG.base_dir_len = value_len;
             strncpy(CONFIG.base_dir, value, value_len);
         }
         else {
-            fprintf(stderr, "unknown key: `%s`\n", key);
+            snprintf(CONFIG_STR_BUFFER,
+                    CONFIG_STR_BUFFER_SIZE,
+                    "line %d: unknown key `%s`",
+                    line_num,
+                    key);
+            CONFIG_ERR_STR = CONFIG_STR_BUFFER;
+            goto cleanup;
         }
     }
+    if(line_num == 0) {
+        snprintf(CONFIG_STR_BUFFER,
+                CONFIG_STR_BUFFER_SIZE,
+                "unable to read the config file: `%s`",
+                strerror(errno));
+        CONFIG_ERR_STR = CONFIG_STR_BUFFER;
+        goto cleanup;
+    }
+    ret_val = 0;
 cleanup:
     free(line);
     return ret_val;

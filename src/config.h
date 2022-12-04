@@ -26,9 +26,13 @@ enum KV_SPLIT_ERR {
  * Returns: < 0 on error, 0 otherwise*/
 int save_config(FILE *f);
 
+/* returns a pointer to the last error the config encountered */
+const char *get_config_err(void);
 
 /* loads a config from `f`
- * Returns: < 0 on error, 0 otherwise */
+ * Returns: < 0 on error, 0 otherwise
+ * if an error occurred, a string explaining the error can be get through
+ * `get_config_err` */
 int load_config(FILE *f);
 
 void cleanup_config();

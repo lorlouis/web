@@ -274,7 +274,7 @@ int main(int argc, const char **argv) {
         return -1;
     }
     if(load_config(config_file)) {
-        fprintf(stderr, "err loading config\n");
+        logging(ERR, "unable to load config: %s", get_config_err());
         return -1;
     }
 
