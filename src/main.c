@@ -116,6 +116,7 @@ void handle_conn(struct conn sock) {
 
             conn_flush(&sock);
 
+            // TODO(louis) use the values in the config
             send_308(&sock, "https://localhost:9092");
 
             goto cleanup;
@@ -321,7 +322,9 @@ int main(int argc, const char **argv) {
         SSL_set_fd(ssl, new_fd);
         struct conn conn = {0};
         conn_new_ssl(ssl, &conn);
-        //conn_new_fd(new_fd, &conn);
+        // FIXME(louis) commented out because the check for tls
+        // breaks the tls lib
+        // conn_new_fd(new_fd, &conn);
         /* TODO(louis) multi thread */
         handle_conn(conn);
     }

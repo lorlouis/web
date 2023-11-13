@@ -17,8 +17,15 @@ enum conn_type {
     CONN_SSL,
 };
 
+enum state {
+    DONE,
+    WANT_READ,
+    WANT_WRITE,
+};
+
 struct conn {
     enum conn_type type;
+    enum state state;
     union {
         SSL *ssl;
         int fd;
