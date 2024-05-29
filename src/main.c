@@ -29,6 +29,16 @@
 
 static volatile bool KEEP_RUNNING = true;
 
+static const uint8_t SSL_HELLO_BYTES[][3] = {
+    {0x16, 0x03, 0x01}, // 3.1
+    {0x16, 0x03, 0x02}, // 1.1
+    {0x16, 0x03, 0x03}, // 1.2
+    {0x16, 0x02, 0x00}, // 2.0
+    {0x16, 0x03, 0x00}, // 3.0
+};
+
+static const size_t SSL_HELLO_VARIANTS = sizeof(SSL_HELLO_BYTES) / sizeof(uint8_t[3]);
+
 magic_t magic;
 
 int mime_init(void) {
@@ -302,15 +312,15 @@ int main(int argc, const char **argv) {
     /* ###########################Start Serving############################# */
     while(KEEP_RUNNING) {
         int code, nfds = 0;
-        fd_set read;
+        fd_set r;
         struct timeval timeval;
         timeval.tv_sec = 5;
         timeval.tv_usec = 0;
-        FD_ZERO(&read);
-        FD_SET(serv_fd, &read);
+        FD_ZERO(&r);
+        FD_SET(serv_fd, &r);
         nfds = nfds > serv_fd ? nfds : serv_fd;
 
-        code = select(nfds+1, &read, 0, 0, &timeval);
+        code = select(nfds+1, &r, 0, 0, &timeval);
         if(code == -1) {
             goto cleanup;
         }
@@ -318,14 +328,27 @@ int main(int argc, const char **argv) {
             continue;
         }
         int new_fd = accept(serv_fd, 0, 0);
-        SSL *ssl = SSL_new(ctx);
-        SSL_set_fd(ssl, new_fd);
         struct conn conn = {0};
-        conn_new_ssl(ssl, &conn);
-        // FIXME(louis) commented out because the check for tls
-        // breaks the tls lib
-        // conn_new_fd(new_fd, &conn);
-        /* TODO(louis) multi thread */
+
+        uint8_t first_tree_bytes[3] = {0};
+        int ret = recv(new_fd, first_tree_bytes, 3, MSG_PEEK);
+        assert(ret != -1);
+
+        // Detect ssl headers and default to plain text,
+        // this is very cursed and should never be done.
+        _Bool is_ssl = false;
+        for(size_t i = 0; i < SSL_HELLO_VARIANTS; i++) {
+            if(!memcmp(SSL_HELLO_BYTES[i], first_tree_bytes, 3)) {
+                SSL *ssl = SSL_new(ctx);
+                SSL_set_fd(ssl, new_fd);
+                conn_new_ssl(ssl, &conn);
+                is_ssl = true;
+                break;
+            }
+        }
+        if(!is_ssl) {
+            conn_new_fd(new_fd, &conn);
+        }
         handle_conn(conn);
     }
 cleanup:

@@ -8,7 +8,7 @@ TEST_DIR = tests
 BUILD_DIR = build
 OUT	= sv
 CC	= gcc
-FLAGS = -c -Wall -fanalyzer
+FLAGS = -c -g -Wall -fanalyzer
 LFLAGS = -lssl -lcrypto -lmagic
 
 OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(SOURCE))
