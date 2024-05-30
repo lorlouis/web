@@ -1,5 +1,3 @@
-#include <sys/socket.h>
-#include <sys/select.h>
 #include <sys/sendfile.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
@@ -189,6 +187,7 @@ void handle_conn(struct conn sock) {
         }
         /* return a boring old 404 */
         else {
+            logging(WARN, "unable to open: %s: %s", path_buff, strerror(errno));
             send_404(&sock);
         }
         goto cleanup;
@@ -225,6 +224,7 @@ void handle_conn(struct conn sock) {
     }
 
 cleanup:
+    close(file);
     conn_cleanup(&sock);
     return;
 }
