@@ -1,20 +1,21 @@
-#include <sys/sendfile.h>
-#include <sys/ioctl.h>
-#include <sys/stat.h>
+#include <assert.h>
+#include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <unistd.h>
-#include <errno.h>
-#include <string.h>
-#include <stdio.h>
 #include <signal.h>
-#include <assert.h>
 #include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <sys/sendfile.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include "headers.h"
 #include "logging.h"
 #include "response_header.h"
-
 #include "send.h"
 
 #include <openssl/err.h>
@@ -103,7 +104,6 @@ void handle_conn(struct conn sock) {
     /* depends on basedir, basedir_len and mimes_hmap */
     char buff[BUFFSIZE]={0};
     ssize_t buff_len;
-    char path_buff[BUFFSIZE]={0};
     int file=-1;
 
     struct request_header request = {0};
@@ -130,9 +130,6 @@ void handle_conn(struct conn sock) {
             goto cleanup;
         }
     }
-
-    memcpy(path_buff, CONFIG.base_dir, CONFIG.base_dir_len);
-    path_buff[CONFIG.base_dir_len] = '/';
 
     /* nothing to read */
     if((buff_len = conn_read(&sock, buff, BUFFSIZE)) < 0) {
@@ -162,12 +159,29 @@ void handle_conn(struct conn sock) {
         file_len = 10;
     }
 
-    memcpy(path_buff + CONFIG.base_dir_len + 1, request.file, file_len);
-    path_buff[CONFIG.base_dir_len + 1 + file_len] = '\0';
-    printf("path buff: %s\n", path_buff);
+    printf("path buff: %s\n", request.file);
+
+    DIR *base_dir = opendir(CONFIG.base_dir);
+    if(!base_dir) {
+        struct response_header response = {0};
+        response_header_init(
+                &response,
+                500,
+                "Internal Error",
+                0);
+        send_str(&response,
+                 SERVER_ERROR_PAGE,
+                 SERVER_ERROR_PAGE_LEN,
+                 &sock);
+        logging(ERR, "unable to open base directory: %s", strerror(errno));
+
+        goto cleanup;
+    }
 
     /* open the file */
-    file = open(path_buff, O_RDONLY);
+    file = openat(dirfd(base_dir), request.file, O_RDONLY);
+
+    closedir(base_dir);
 
     /* file not found */
     if(file == -1) {
@@ -187,22 +201,22 @@ void handle_conn(struct conn sock) {
         }
         /* return a boring old 404 */
         else {
-            logging(WARN, "unable to open: %s: %s", path_buff, strerror(errno));
+            logging(WARN, "unable to open: %s: %s", request.file, strerror(errno));
             send_404(&sock);
         }
         goto cleanup;
     }
     /* ##### At this point a file is found ##### */
-    int path_len = strlen(path_buff);
+    int path_len = strlen(request.file);
     /* by default the linux mimetype database does not include css for some
      * reason */
-    if(path_len + 4 < BUFFSIZE && !strncmp(path_buff+path_len-4, ".css", 4)) {
+    if(path_len + 4 < BUFFSIZE && !strncmp(request.file+path_len-4, ".css", 4)) {
         type = "text/css";
     }
 
     /* set MIME info */
     if(!type) {
-        type = magic_file(magic, path_buff);
+        type = magic_descriptor(magic, file);
     }
     if(!type) {
         type = "application/octet-stream";
